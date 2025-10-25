@@ -1,0 +1,31 @@
+name: Daily Quote Update
+
+on:
+  schedule:
+    # Runs every day at 6:00 AM IST (00:30 UTC)
+    - cron: '30 0 * * *'
+  workflow_dispatch:  # Allows manual trigger for testing
+
+jobs:
+  update-quote:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        pip install openai requests
+    
+    - name: Run daily quote script
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+        NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+      run: python daily_quote.py
