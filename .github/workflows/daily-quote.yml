@@ -3,9 +3,9 @@ name: Daily Automation Suite
 on:
   schedule:
     # Daily quote at 6:00 AM IST (0:30 UTC)
-  #  - cron: '30 0 * * *'
+    - cron: '30 0 * * *'
     # Daily briefing at 6:15 AM IST (0:45 UTC)  
-  #  - cron: '45 0 * * *'
+   - cron: '45 0 * * *'
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
