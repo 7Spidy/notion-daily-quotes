@@ -3,10 +3,10 @@ name: Daily Automation: Quote & Briefing
 on:
   schedule:
     # Daily quote at 6:00 AM IST (0:30 UTC)
-    - cron:  '30 0 * * *'
-    # Daily briefing and diagnostics at 6:15 AM IST (0:45 UTC)
-    - cron:  '45 0 * * *'
-  workflow_dispatch:  # Allow manual run for debugging/testing
+    - cron: '30 0 * * *'
+    # Daily briefing at 6:15 AM IST (0:45 UTC)
+    - cron: '45 0 * * *'
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   daily-quote:
@@ -34,7 +34,7 @@ jobs:
   daily-briefing:
     name: Generate Daily Briefing & Diagnostics
     runs-on: ubuntu-latest
-    needs: daily-quote
+    needs: daily-quote   # This ensures daily-quote runs before daily-briefing
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
