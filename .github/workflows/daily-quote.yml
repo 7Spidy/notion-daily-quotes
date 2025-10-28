@@ -1,4 +1,4 @@
-name: Daily Automation: Quote & Briefing
+name: Daily Automation Suite
 
 on:
   schedule:
@@ -34,7 +34,7 @@ jobs:
   daily-briefing:
     name: Generate Daily Briefing & Diagnostics
     runs-on: ubuntu-latest
-    needs: daily-quote   # This ensures daily-quote runs before daily-briefing
+    needs: daily-quote   # Ensures quote runs before briefing
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
