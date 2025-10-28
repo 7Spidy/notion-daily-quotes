@@ -1,59 +1,60 @@
-name: Daily Automation Suite
+name: Daily Automation: Quote & Briefing
 
 on:
   schedule:
     # Daily quote at 6:00 AM IST (0:30 UTC)
-    - cron: '30 0 * * *'
-    # Daily briefing at 6:15 AM IST (0:45 UTC)  
-    - cron: '45 0 * * *'
-  workflow_dispatch:  # Manual trigger for testing
+    - cron:  '30 0 * * *'
+    # Daily briefing and diagnostics at 6:15 AM IST (0:45 UTC)
+    - cron:  '45 0 * * *'
+  workflow_dispatch:  # Allow manual run for debugging/testing
 
 jobs:
   daily-quote:
-    runs-on: ubuntu-latest
     name: Generate Daily Quote
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: pip install openai requests
-    
-    - name: Generate daily quote
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-        NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-      run: python daily_quote.py
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install openai requests
+
+      - name: Run Daily Quote Script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: python daily_quote.py
 
   daily-briefing:
+    name: Generate Daily Briefing & Diagnostics
     runs-on: ubuntu-latest
-    name: Generate Daily Briefing
-    needs: daily-quote  # Run after quote completes
+    needs: daily-quote
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: pip install openai requests PyJWT cryptography
-    
-    - name: Generate daily briefing
-      env:
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-        NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-        CAPTURE_DATABASE_ID: ${{ secrets.CAPTURE_DATABASE_ID }}
-        GOALS_DATABASE_ID: ${{ secrets.GOALS_DATABASE_ID }}
-        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-        GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
-      run: python daily_briefing.py
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install openai requests PyJWT
+
+      - name: Run Daily Briefing Script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
+          WEEKLY_CHECKLIST_DB_ID: ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
+          STRATEGIC_GOALS_DB_ID: ${{ secrets.STRATEGIC_GOALS_DB_ID }}
+          DAILY_JOURNAL_DB_ID: ${{ secrets.DAILY_JOURNAL_DB_ID }}
+        run: python daily_briefing.py
