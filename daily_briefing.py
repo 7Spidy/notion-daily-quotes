@@ -355,7 +355,7 @@ class StrategicDailyBriefing:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-5-nano",
                 messages=[
                     {"role": "system", "content": "You are a strategic productivity coach who creates highly specific, data-driven daily briefings. Always reference actual data provided rather than generic advice."},
                     {"role": "user", "content": prompt}
