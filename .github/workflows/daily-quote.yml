@@ -2,9 +2,9 @@ name: Daily Automation Suite
 
 on:
   schedule:
-    # Daily quote at 6:00 AM IST (0:30 UTC)
+    # Daily quote at 6:00 AM IST (00:30 UTC)
     - cron: '30 0 * * *'
-    # Daily briefing at 6:15 AM IST (0:45 UTC)
+    # Daily briefing at 6:15 AM IST (00:45 UTC)
     - cron: '45 0 * * *'
   workflow_dispatch:  # Manual trigger
 
@@ -45,7 +45,8 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        run: pip install openai requests PyJWT
+        # Adds all possible dependencies for Google API JWT and HTTP libraries
+        run: pip install openai requests PyJWT cryptography google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
       - name: Run Daily Briefing Script
         env:
