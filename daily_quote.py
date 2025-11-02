@@ -39,7 +39,7 @@ class MediaInspiredQuoteGenerator:
                     raise e
 
     def _query_media_database(self, db_id, media_type):
-        """Internal method to query media database (wrapped with retry)"""
+        """Internal method to query media database - ALL MEDIA (no status filter)"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -48,13 +48,8 @@ class MediaInspiredQuoteGenerator:
         
         query_url = f"https://api.notion.com/v1/databases/{db_id}/query"
         query_data = {
-            "filter": {
-                "property": "Status",
-                "status": {
-                    "equals": "In progress"
-                }
-            },
-            "page_size": 10
+            # REMOVED STATUS FILTER - Gets all media regardless of status
+            "page_size": 50  # Increased to get more variety
         }
         
         response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
@@ -72,8 +67,13 @@ class MediaInspiredQuoteGenerator:
                 if 'Name' in item['properties'] and item['properties']['Name']['title']:
                     name = item['properties']['Name']['title'][0]['plain_text']
                 
+                # Get status for logging
+                status = 'Unknown'
+                if 'Status' in item['properties'] and item['properties']['Status']['status']:
+                    status = item['properties']['Status']['status']['name']
+                
                 # Get additional context based on media type
-                context = {}
+                context = {'status': status}
                 
                 if media_type == 'Movies & TV':
                     if 'Type' in item['properties'] and item['properties']['Type']['select']:
@@ -103,37 +103,37 @@ class MediaInspiredQuoteGenerator:
         
         return media_items
 
-    def get_current_media_consumption(self):
-        """Get all current media consumption with retry logic"""
+    def get_all_media_consumption(self):
+        """Get ALL media from databases with retry logic"""
         all_media = []
         
-        # Get Movies & TV in progress
+        # Get ALL Movies & TV (no status filter)
         if self.movies_db_id:
             try:
-                print("🎬 Getting Movies & TV in progress...")
+                print("🎬 Getting ALL Movies & TV...")
                 movies_tv = self.notion_retry(self._query_media_database, self.movies_db_id, "Movies & TV")
                 all_media.extend(movies_tv)
-                print(f"   Found {len(movies_tv)} movies/shows in progress")
+                print(f"   Found {len(movies_tv)} total movies/shows")
             except Exception as e:
                 print(f"   ❌ Movies & TV error: {e}")
         
-        # Get Books in progress
+        # Get ALL Books (no status filter)
         if self.books_db_id:
             try:
-                print("📚 Getting Books in progress...")
+                print("📚 Getting ALL Books...")
                 books = self.notion_retry(self._query_media_database, self.books_db_id, "Books")
                 all_media.extend(books)
-                print(f"   Found {len(books)} books in progress")
+                print(f"   Found {len(books)} total books")
             except Exception as e:
                 print(f"   ❌ Books error: {e}")
         
-        # Get Games in progress
+        # Get ALL Games (no status filter)
         if self.games_db_id:
             try:
-                print("🎮 Getting Games in progress...")
+                print("🎮 Getting ALL Games...")
                 games = self.notion_retry(self._query_media_database, self.games_db_id, "Games")
                 all_media.extend(games)
-                print(f"   Found {len(games)} games in progress")
+                print(f"   Found {len(games)} total games")
             except Exception as e:
                 print(f"   ❌ Games error: {e}")
         
@@ -151,16 +151,25 @@ class MediaInspiredQuoteGenerator:
         
         return quote.strip()
 
-    def generate_media_inspired_quote(self, current_media):
-        """Generate a quote inspired by current media consumption"""
+    def generate_media_inspired_quote(self, all_media):
+        """Generate a quote inspired by ALL media consumption"""
         current_date = datetime.now().strftime("%B %d, %Y")
         
-        if not current_media:
+        if not all_media:
             prompt = f"Find a real, authentic quote from a famous book, movie, TV show, or video game that would be inspirational for {current_date}. The quote should be motivational and focus on personal growth, learning, or achievement. Provide the EXACT quote as it appears in the original source. Format: Quote - Character Name, Source Title. Do NOT create or modify quotes. Use only real quotes from actual media."
         else:
-            selected_media = random.choice(current_media)
-            media_context = ""
+            # Pick a random media item from ALL media
+            selected_media = random.choice(all_media)
             
+            # Show variety of statuses for logging
+            status_counts = {}
+            for item in all_media:
+                status = item.get('context', {}).get('status', 'Unknown')
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            print(f"   Media status breakdown: {status_counts}")
+            
+            media_context = ""
             if selected_media['type'] == 'Books' and selected_media.get('context', {}).get('author'):
                 media_context = f" by {selected_media['context']['author']}"
             elif selected_media['type'] == 'Movies & TV' and selected_media.get('context', {}).get('type'):
@@ -266,22 +275,23 @@ class MediaInspiredQuoteGenerator:
 
     def run(self):
         """Main execution function"""
-        print(f"✨ Authentic Media Quote Generator")
+        print(f"✨ Authentic Media Quote Generator (All Media)")
         print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        print("🎯 Analyzing current media consumption...")
-        current_media = self.get_current_media_consumption()
+        print("🎯 Analyzing ALL media consumption...")
+        all_media = self.get_all_media_consumption()
         
-        if current_media:
-            print(f"📊 Found {len(current_media)} items currently in progress:")
-            for item in current_media[:3]:
-                print(f"   • {item['name']} ({item['type']})")
+        if all_media:
+            print(f"📊 Found {len(all_media)} total media items:")
+            for item in all_media[:5]:  # Show first 5
+                status = item.get('context', {}).get('status', 'Unknown')
+                print(f"   • {item['name']} ({item['type']}) - {status}")
         else:
-            print("📊 No media currently in progress - using general authentic quotes")
+            print("📊 No media found - using general authentic quotes")
         
-        print("\n🤖 Finding authentic quote from media source...")
-        quote = self.generate_media_inspired_quote(current_media)
+        print("\n🤖 Finding authentic quote from media library...")
+        quote = self.generate_media_inspired_quote(all_media)
         print(f"   Found authentic quote: {quote[:100]}...")
         
         self.update_notion_page(quote)
