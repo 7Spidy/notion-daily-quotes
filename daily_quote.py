@@ -155,33 +155,10 @@ class MediaInspiredQuoteGenerator:
             The quote should be motivational, focus on personal growth, and be max 2 sentences.
             Format: "Quote text" - Author (or "Daily Reflection" if original)
             """
-        else:
-            # Pick a random media item for inspiration
-            selected_media = random.choice(current_media)
-            media_list = [f"• {item['name']} ({item['type']})" for item in current_media]
-            
-            prompt = f"""
-            Generate an inspiring and motivational quote for {current_date} specifically related to "{selected_media['name']}" which is a {selected_media['type']} currently being consumed.
-            
-            CURRENT MEDIA CONSUMPTION:
-            {chr(10).join(media_list)}
-            
-            SELECTED FOR INSPIRATION: {selected_media['name']} ({selected_media['type']})
-            ADDITIONAL CONTEXT: {selected_media.get('context', {})}
-            
-            The quote should:
-            - Be inspired by themes, lessons, or characters from {selected_media['name']}
-            - Connect to personal growth, productivity, or life wisdom
-            - Be motivational and uplifting
-            - Reference the media subtly without being too obvious
-            - Max 2 sentences
-            - Appeal to someone interested in AI development, gaming, and continuous learning
-            
-            Format: "Quote text" - Author/Character (or "Inspired by {selected_media['name']}" if original)
-            ""
+        
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development."},
                     {"role": "user", "content": prompt}
