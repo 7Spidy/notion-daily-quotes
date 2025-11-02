@@ -141,7 +141,6 @@ class MediaInspiredQuoteGenerator:
 
     def clean_quote_formatting(self, quote):
         """Clean up quote formatting to remove unwanted asterisks and italics"""
-        # Remove asterisks used for italics around media titles
         import re
         
         # Remove *MediaTitle* patterns and replace with MediaTitle
@@ -157,22 +156,27 @@ class MediaInspiredQuoteGenerator:
         current_date = datetime.now().strftime("%B %d, %Y")
         
         if not current_media:
-            prompt = f"Generate an inspiring quote for {current_date} for someone who loves technology, AI development, gaming, reading, movies, and storytelling. The quote should be motivational, focus on personal growth, and be max 2 sentences. Format: Quote - Author (or Daily Reflection if original). Do NOT use asterisks or italics formatting."
+            prompt = f"Find a real, authentic quote from a famous book, movie, TV show, or video game that would be inspirational for {current_date}. The quote should be motivational and focus on personal growth, learning, or achievement. Provide the EXACT quote as it appears in the original source. Format: Quote - Character Name, Source Title. Do NOT create or modify quotes. Use only real quotes from actual media."
         else:
             selected_media = random.choice(current_media)
-            media_list = [f"{item['name']} ({item['type']})" for item in current_media]
+            media_context = ""
             
-            prompt = f"Generate an inspiring quote for {current_date} related to {selected_media['name']} ({selected_media['type']}). Current media: {'; '.join([item['name'] for item in current_media[:3]])}. The quote should connect to personal growth and productivity, be motivational, max 2 sentences, and appeal to someone interested in AI development and continuous learning. Format: Quote - Author/Character, MediaTitle (without asterisks or italic formatting). Do NOT use asterisks around the media title."
+            if selected_media['type'] == 'Books' and selected_media.get('context', {}).get('author'):
+                media_context = f" by {selected_media['context']['author']}"
+            elif selected_media['type'] == 'Movies & TV' and selected_media.get('context', {}).get('type'):
+                media_context = f" ({selected_media['context']['type']})"
+                
+            prompt = f"Find a real, authentic quote from '{selected_media['name']}'{media_context}. The quote must be an EXACT quote that actually appears in {selected_media['name']}. Look for quotes about growth, determination, learning, overcoming challenges, or achieving goals. Provide the exact quote as spoken/written in the original source. Format: Quote - Character/Speaker Name, {selected_media['name']}. Do NOT create, modify, or paraphrase quotes. Use only authentic quotes from the actual {selected_media['type'].lower()}."
         
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development. Never use asterisks or italic formatting in your responses."},
+                    {"role": "system", "content": "You are a quote researcher who finds ONLY real, authentic quotes from actual books, movies, TV shows, and video games. You never create, modify, or paraphrase quotes. You only provide exact quotes as they appear in the original source material. If you don't know an exact quote, say so rather than making one up."},
                     {"role": "user", "content": prompt}
                 ],
                 max_completion_tokens=150,
-                temperature=0.8
+                temperature=0.3
             )
             
             quote = response.choices[0].message.content.strip()
@@ -185,9 +189,9 @@ class MediaInspiredQuoteGenerator:
         except Exception as e:
             print(f"OpenAI error: {e}")
             fallback_quotes = [
-                '"Every story you consume shapes the story you create. Choose wisely and let inspiration guide your journey." - Daily Reflection',
-                '"Like the heroes in your favorite tales, your greatest adventures begin with a single decision to grow." - Daily Reflection',
-                '"The books you read, games you play, and shows you watch are training grounds for your imagination." - Daily Reflection'
+                '"The way to get started is to quit talking and begin doing." - Walt Disney',
+                '"Innovation distinguishes between a leader and a follower." - Steve Jobs',
+                '"The future belongs to those who believe in the beauty of their dreams." - Eleanor Roosevelt'
             ]
             return random.choice(fallback_quotes)
 
@@ -254,7 +258,7 @@ class MediaInspiredQuoteGenerator:
     def update_notion_page(self, quote):
         """Update quote with retry logic"""
         try:
-            print("📝 Updating Notion page with media-inspired quote...")
+            print("📝 Updating Notion page with authentic media quote...")
             action = self.notion_retry(self._update_notion_page, quote)
             print(f"   ✅ Successfully {action} quote block!")
         except Exception as e:
@@ -262,7 +266,7 @@ class MediaInspiredQuoteGenerator:
 
     def run(self):
         """Main execution function"""
-        print(f"✨ Media-Inspired Daily Quote Generator")
+        print(f"✨ Authentic Media Quote Generator")
         print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
@@ -274,11 +278,11 @@ class MediaInspiredQuoteGenerator:
             for item in current_media[:3]:
                 print(f"   • {item['name']} ({item['type']})")
         else:
-            print("📊 No media currently in progress - using general inspiration")
+            print("📊 No media currently in progress - using general authentic quotes")
         
-        print("\n🤖 Generating media-inspired quote...")
+        print("\n🤖 Finding authentic quote from media source...")
         quote = self.generate_media_inspired_quote(current_media)
-        print(f"   Generated quote: {quote[:100]}...")
+        print(f"   Found authentic quote: {quote[:100]}...")
         
         self.update_notion_page(quote)
         print(f"\n✅ Process completed at: {datetime.now().strftime('%H:%M:%S IST')}")
