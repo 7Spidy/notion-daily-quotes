@@ -139,23 +139,36 @@ class MediaInspiredQuoteGenerator:
         
         return all_media
 
+    def clean_quote_formatting(self, quote):
+        """Clean up quote formatting to remove unwanted asterisks and italics"""
+        # Remove asterisks used for italics around media titles
+        import re
+        
+        # Remove *MediaTitle* patterns and replace with MediaTitle
+        quote = re.sub(r'\*([^*]+)\*', r'\1', quote)
+        
+        # Clean up any double spaces
+        quote = re.sub(r'\s+', ' ', quote)
+        
+        return quote.strip()
+
     def generate_media_inspired_quote(self, current_media):
         """Generate a quote inspired by current media consumption"""
         current_date = datetime.now().strftime("%B %d, %Y")
         
         if not current_media:
-            prompt = f"Generate an inspiring quote for {current_date} for someone who loves technology, AI development, gaming, reading, movies, and storytelling. The quote should be motivational, focus on personal growth, and be max 2 sentences. Format: Quote - Author (or Daily Reflection if original)"
+            prompt = f"Generate an inspiring quote for {current_date} for someone who loves technology, AI development, gaming, reading, movies, and storytelling. The quote should be motivational, focus on personal growth, and be max 2 sentences. Format: Quote - Author (or Daily Reflection if original). Do NOT use asterisks or italics formatting."
         else:
             selected_media = random.choice(current_media)
             media_list = [f"{item['name']} ({item['type']})" for item in current_media]
             
-            prompt = f"Generate an inspiring quote for {current_date} related to {selected_media['name']} ({selected_media['type']}). Current media: {'; '.join([item['name'] for item in current_media[:3]])}. The quote should connect to personal growth and productivity, be motivational, max 2 sentences, and appeal to someone interested in AI development and continuous learning. Format: Quote - Author/Character"
+            prompt = f"Generate an inspiring quote for {current_date} related to {selected_media['name']} ({selected_media['type']}). Current media: {'; '.join([item['name'] for item in current_media[:3]])}. The quote should connect to personal growth and productivity, be motivational, max 2 sentences, and appeal to someone interested in AI development and continuous learning. Format: Quote - Author/Character, MediaTitle (without asterisks or italic formatting). Do NOT use asterisks around the media title."
         
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development."},
+                    {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development. Never use asterisks or italic formatting in your responses."},
                     {"role": "user", "content": prompt}
                 ],
                 max_completion_tokens=150,
@@ -164,7 +177,9 @@ class MediaInspiredQuoteGenerator:
             
             quote = response.choices[0].message.content.strip()
             
-            # REMOVED THE EXTRA INSPIRATION LINE - GPT already includes the attribution
+            # Clean up any asterisks or unwanted formatting
+            quote = self.clean_quote_formatting(quote)
+            
             return quote
             
         except Exception as e:
