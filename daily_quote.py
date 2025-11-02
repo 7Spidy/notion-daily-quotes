@@ -144,21 +144,16 @@ class MediaInspiredQuoteGenerator:
         current_date = datetime.now().strftime("%B %d, %Y")
         
         if not current_media:
-            # Fallback prompt if no media in progress
-            prompt = f"""
-            Generate an inspiring quote for {current_date} for someone who loves:
-            - Technology and AI development
-            - Gaming and strategic thinking
-            - Reading and continuous learning
-            - Movies, TV shows, and storytelling
+            prompt = f"Generate an inspiring quote for {current_date} for someone who loves technology, AI development, gaming, reading, movies, and storytelling. The quote should be motivational, focus on personal growth, and be max 2 sentences. Format: Quote - Author (or Daily Reflection if original)"
+        else:
+            selected_media = random.choice(current_media)
+            media_list = [f"• {item['name']} ({item['type']})" for item in current_media]
             
-            The quote should be motivational, focus on personal growth, and be max 2 sentences.
-            Format: "Quote text" - Author (or "Daily Reflection" if original)
-            """
+            prompt = f"Generate an inspiring quote for {current_date} related to {selected_media['name']} ({selected_media['type']}). Current media: {'; '.join([item['name'] for item in current_media[:3]])}. The quote should connect to personal growth and productivity, be motivational, max 2 sentences, and appeal to someone interested in AI development and continuous learning. Format: Quote - Author/Character"
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development."},
                     {"role": "user", "content": prompt}
@@ -169,7 +164,6 @@ class MediaInspiredQuoteGenerator:
             
             quote = response.choices[0].message.content.strip()
             
-            # Add media context to quote if available
             if current_media:
                 selected = random.choice(current_media)
                 quote += f"\n\n💡 *Inspired by your current {selected['type'].lower()}: {selected['name']}*"
@@ -195,7 +189,6 @@ class MediaInspiredQuoteGenerator:
             "Notion-Version": "2022-06-28"
         }
         
-        # Get current page blocks
         blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
@@ -204,7 +197,6 @@ class MediaInspiredQuoteGenerator:
             
         blocks = response.json()
         
-        # Find existing quote block
         quote_block_id = None
         for block in blocks.get('results', []):
             if (block['type'] == 'callout' and 
@@ -214,7 +206,6 @@ class MediaInspiredQuoteGenerator:
                 quote_block_id = block['id']
                 break
         
-        # Prepare quote content
         quote_content = f"🌟 Daily Quote - {current_date}\n\n{quote}"
         
         new_block = {
@@ -235,14 +226,12 @@ class MediaInspiredQuoteGenerator:
         }
         
         if quote_block_id:
-            # Update existing block
             update_url = f"https://api.notion.com/v1/blocks/{quote_block_id}"
             response = requests.patch(update_url, headers=headers, json=new_block, timeout=10)
             if response.status_code != 200:
                 raise Exception(f"Failed to update quote: HTTP {response.status_code}")
             return "updated"
         else:
-            # Create new block
             create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
             payload = {"children": [new_block]}
             response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
@@ -265,23 +254,20 @@ class MediaInspiredQuoteGenerator:
         print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        # Get current media consumption
         print("🎯 Analyzing current media consumption...")
         current_media = self.get_current_media_consumption()
         
         if current_media:
             print(f"📊 Found {len(current_media)} items currently in progress:")
-            for item in current_media[:3]:  # Show first 3
+            for item in current_media[:3]:
                 print(f"   • {item['name']} ({item['type']})")
         else:
             print("📊 No media currently in progress - using general inspiration")
         
-        # Generate quote
         print("\n🤖 Generating media-inspired quote...")
         quote = self.generate_media_inspired_quote(current_media)
         print(f"   Generated quote: {quote[:100]}...")
         
-        # Update Notion page
         self.update_notion_page(quote)
         print(f"\n✅ Process completed at: {datetime.now().strftime('%H:%M:%S IST')}")
 
