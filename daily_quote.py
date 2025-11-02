@@ -164,10 +164,7 @@ class MediaInspiredQuoteGenerator:
             
             quote = response.choices[0].message.content.strip()
             
-            if current_media:
-                selected = random.choice(current_media)
-                quote += f"\n\n💡 *Inspired by your current {selected['type'].lower()}: {selected['name']}*"
-            
+            # REMOVED THE EXTRA INSPIRATION LINE - GPT already includes the attribution
             return quote
             
         except Exception as e:
