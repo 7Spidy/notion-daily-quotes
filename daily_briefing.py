@@ -2,7 +2,7 @@ import openai
 import requests
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import jwt
 import time
 
@@ -18,8 +18,8 @@ class StrategicDailyBriefing:
         self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
         
         # Sleep schedule
-        self.sleep_start = "22:00"  # 10:00 PM
-        self.sleep_end = "06:30"    # 6:30 AM
+        self.sleep_start = "22:00"
+        self.sleep_end = "06:30"
         
         # Retry settings
         self.max_retries = 3
@@ -33,6 +33,13 @@ class StrategicDailyBriefing:
         except Exception as e:
             print(f"Google setup error: {e}")
             self.google_credentials = None
+
+    def get_current_ist_time(self):
+        """Get current IST time correctly"""
+        # Create IST timezone (UTC+5:30)
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist)
+        return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
 
     def notion_retry(self, func, *args, **kwargs):
         """Retry wrapper for Notion API calls with exponential backoff"""
@@ -90,9 +97,11 @@ class StrategicDailyBriefing:
                 
             headers = {'Authorization': f'Bearer {access_token}'}
             
-            now = datetime.now()
-            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
-            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat() + 'Z'
+            # Use IST timezone for calendar queries
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
             
             url = f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events"
             params = {
@@ -280,15 +289,15 @@ class StrategicDailyBriefing:
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
         """Generate AI-powered strategic daily briefing with sleep schedule awareness"""
-        current_datetime = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p IST")
+        current_datetime = self.get_current_ist_time()
         
-        prompt = f"Create 5 numbered motivational insights for {current_datetime} using this REAL data. IMPORTANT: Never suggest any activities or meetings between 10:00 PM and 6:30 AM as this is sleep time. All suggestions must be within 6:30 AM - 10:00 PM only. WEEKLY TASKS (unchecked): {'; '.join(checklist_items[:3])}. STRATEGIC GOALS (active): {'; '.join(strategic_goals[:3])}. RECENT JOURNAL ENTRIES: {'; '.join(journal_entries)}. TODAY'S CALENDAR: {'; '.join(calendar_events[:5])}. Create exactly this format with specific references to the data: 1. [motivational insight about completing a weekly task - mention specific task name and suggest optimal daytime hours] 2. [motivational insight about advancing a strategic goal - mention specific goal and percentage, suggest productive hours between 7 AM - 9 PM] 3. [insight based on recent journal entry pattern - reference actual entry] 4. [insight about today's calendar event - mention specific event and preparation timing during awake hours] 5. [reward/unwind tip for evening hours between 7 PM - 9:30 PM based on free time and journal insights]. Be specific, reference actual data, and respect sleep schedule 10 PM - 6:30 AM."
+        prompt = f"Create exactly 5 numbered motivational insights using this REAL data. Do NOT include any intro text or extra formatting - start directly with numbered list. IMPORTANT: Never suggest any activities between 10:00 PM and 6:30 AM as this is sleep time. WEEKLY TASKS (unchecked): {'; '.join(checklist_items[:3])}. STRATEGIC GOALS (active): {'; '.join(strategic_goals[:3])}. RECENT JOURNAL ENTRIES: {'; '.join(journal_entries)}. TODAY'S CALENDAR: {'; '.join(calendar_events[:5])}. Format: 1. [insight about weekly task with 7AM-9PM timing] 2. [insight about strategic goal with daytime timing] 3. [insight from journal pattern] 4. [insight about calendar event with prep timing 6:30AM-9:30PM] 5. [evening reward tip 7PM-9:30PM]. Be specific, reference actual data, respect sleep schedule."
         
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a motivational productivity coach who creates specific, data-driven daily insights. Always reference the actual data provided and create actionable, inspiring guidance. CRITICAL: Never suggest activities between 10:00 PM and 6:30 AM - this is sleep time. All recommendations must be within waking hours 6:30 AM to 10:00 PM."},
+                    {"role": "system", "content": "You are a motivational productivity coach. Create exactly 5 numbered insights with no intro text. Start directly with '1.' Never suggest activities between 10:00 PM and 6:30 AM. Reference specific data provided."},
                     {"role": "user", "content": prompt}
                 ],
                 max_completion_tokens=400,
@@ -300,7 +309,7 @@ class StrategicDailyBriefing:
             
         except Exception as e:
             print(f"OpenAI error: {e}")
-            fallback = "1. Focus on completing your most important weekly task during your peak morning hours (8 AM - 11 AM) - every small step builds momentum toward your larger goals.\n2. Make measurable progress on your strategic initiatives during focused afternoon sessions (2 PM - 5 PM) - consistency creates breakthrough results.\n3. Reflect on recent insights and apply yesterday's lessons to today's opportunities during your evening wind-down (7 PM - 9 PM).\n4. Approach today's scheduled activities with intentional focus and present-moment awareness during your productive daytime hours.\n5. Schedule time for renewal and relaxation between 8 PM - 9:30 PM before your 10 PM sleep routine - balance drives sustainable performance."
+            fallback = "1. Focus on completing your most important weekly task during peak morning hours (8:00-11:00 AM) - every small step builds momentum.\n2. Make measurable progress on your strategic initiatives during focused afternoon sessions (2:00-5:00 PM) - consistency creates results.\n3. Apply insights from your recent journal reflections to today's decision-making process.\n4. Approach today's scheduled activities with intentional focus during your productive daytime hours.\n5. Schedule relaxation time between 8:00-9:30 PM before your sleep routine - balance drives sustainable performance."
             return fallback
 
     def _update_notion_block(self, briefing_content):
@@ -328,7 +337,7 @@ class StrategicDailyBriefing:
                 briefing_block_id = block['id']
                 break
         
-        current_datetime = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p IST")
+        current_datetime = self.get_current_ist_time()
         full_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n{briefing_content}"
         
         new_block_data = {
@@ -362,207 +371,10 @@ class StrategicDailyBriefing:
         except Exception as e:
             print(f"❌ Failed to update Notion: {str(e)}")
 
-    def get_calendar_events_today(self):
-        """Get today's calendar events"""
-        try:
-            access_token = self.get_google_access_token()
-            if not access_token:
-                return ["Calendar access unavailable"]
-                
-            headers = {'Authorization': f'Bearer {access_token}'}
-            
-            now = datetime.now()
-            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat() + 'Z'
-            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat() + 'Z'
-            
-            url = f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events"
-            params = {
-                'timeMin': start_time,
-                'timeMax': end_time,
-                'singleEvents': True,
-                'orderBy': 'startTime'
-            }
-            
-            response = requests.get(url, headers=headers, params=params)
-            
-            if response.status_code != 200:
-                print(f"Calendar API error: {response.status_code}")
-                return ["Calendar access error"]
-                
-            events_data = response.json()
-            events = events_data.get('items', [])
-            
-            formatted_events = []
-            for event in events:
-                start = event.get('start', {})
-                summary = event.get('summary', 'No title')
-                
-                start_time = start.get('dateTime', start.get('date', ''))
-                if 'T' in start_time:
-                    time_str = start_time.split('T')[1][:5]
-                else:
-                    time_str = 'All day'
-                
-                formatted_events.append(f"{time_str}: {summary}")
-            
-            return formatted_events if formatted_events else ["No events scheduled today"]
-            
-        except Exception as e:
-            print(f"Calendar error: {e}")
-            return ["Calendar temporarily unavailable"]
-
-    def _query_weekly_checklist(self):
-        """Get unchecked weekly checklist items"""
-        headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-        }
-        
-        query_url = f"https://api.notion.com/v1/databases/{self.weekly_checklist_db_id}/query"
-        query_data = {
-            "filter": {
-                "property": "Done?",
-                "checkbox": {
-                    "equals": False
-                }
-            },
-            "page_size": 10
-        }
-        
-        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
-        
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
-            
-        data = response.json()
-        results = data.get('results', [])
-        
-        items = []
-        for item in results:
-            try:
-                name = 'Untitled task'
-                if 'Task' in item['properties'] and item['properties']['Task']['title']:
-                    name = item['properties']['Task']['title'][0]['plain_text']
-                items.append(name)
-            except Exception as e:
-                print(f"   ⚠️ Error parsing task: {e}")
-                items.append("Weekly task")
-        
-        return items if items else ["All weekly items completed"]
-
-    def get_weekly_checklist_items(self):
-        """Get unchecked weekly checklist with retry"""
-        try:
-            print("📋 Getting Weekly Checklist items...")
-            items = self.notion_retry(self._query_weekly_checklist)
-            print(f"   Found {len(items)} unchecked items")
-            return items
-        except Exception as e:
-            print(f"❌ Weekly checklist failed: {e}")
-            return ["Weekly planning review"]
-
-    def _query_strategic_goals(self):
-        """Get active strategic goals"""
-        headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-        }
-        
-        query_url = f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query"
-        query_data = {
-            "filter": {"property": "Status", "status": {"equals": "In progress"}},
-            "page_size": 5
-        }
-        
-        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
-        
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
-            
-        data = response.json()
-        results = data.get('results', [])
-        
-        goals = []
-        for goal in results:
-            try:
-                name = 'Untitled Goal'
-                if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
-                    name = goal['properties']['Name']['title'][0]['plain_text']
-                
-                progress = 0
-                if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
-                    progress = int(goal['properties']['Progress']['number'])
-                
-                goals.append(f"{name} ({progress}% complete)")
-            except Exception as e:
-                print(f"   ⚠️ Error parsing goal: {e}")
-                goals.append("Strategic goal")
-        
-        return goals if goals else ["Define new strategic goals"]
-
-    def get_strategic_goals(self):
-        """Get strategic goals with retry"""
-        try:
-            print("🎯 Getting Strategic Goals...")
-            goals = self.notion_retry(self._query_strategic_goals)
-            print(f"   Found {len(goals)} active goals")
-            return goals
-        except Exception as e:
-            print(f"❌ Strategic goals failed: {e}")
-            return ["Strategic milestone planning"]
-
-    def _query_recent_journal_entries(self):
-        """Get recent journal entries"""
-        headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-        }
-        
-        query_url = f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query"
-        query_data = {
-            "sorts": [{"property": "Created time", "direction": "descending"}],
-            "page_size": 3
-        }
-        
-        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
-        
-        if response.status_code != 200:
-            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
-            
-        data = response.json()
-        results = data.get('results', [])
-        
-        entries = []
-        for entry in results:
-            try:
-                name = 'Journal Entry'
-                if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
-                    name = entry['properties']['Name']['title'][0]['plain_text']
-                    entries.append(name)
-            except Exception as e:
-                print(f"   ⚠️ Error parsing journal entry: {e}")
-                entries.append("Recent reflection")
-        
-        return entries if entries else ["Evening reflection routine"]
-
-    def get_recent_journal_entries(self):
-        """Get recent journal entries with retry"""
-        try:
-            print("📝 Getting recent journal entries...")
-            entries = self.notion_retry(self._query_recent_journal_entries)
-            print(f"   Found {len(entries)} recent entries")
-            return entries
-        except Exception as e:
-            print(f"❌ Journal entries failed: {e}")
-            return ["Daily reflection practice"]
-
     def run(self):
         """Main execution"""
         print(f"🎯 Strategic Daily Briefing Generator (Sleep-Aware)")
-        print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
         print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)\n")
         
@@ -586,7 +398,7 @@ class StrategicDailyBriefing:
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
         
         self.update_daily_briefing_section(briefing)
-        print(f"\n✅ Completed at: {datetime.now().strftime('%H:%M:%S IST')}")
+        print(f"\n✅ Completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
