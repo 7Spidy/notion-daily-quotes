@@ -182,7 +182,7 @@ class MediaInspiredQuoteGenerator:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Using GPT-4o Mini (current best small model)
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": "You are a thoughtful quote curator who creates meaningful daily inspiration based on current media consumption. Create quotes that bridge entertainment with personal development."},
                     {"role": "user", "content": prompt}
