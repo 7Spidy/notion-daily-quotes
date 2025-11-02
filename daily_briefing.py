@@ -19,7 +19,7 @@ class StrategicDailyBriefing:
         
         # Retry settings
         self.max_retries = 3
-        self.retry_delay = 3  # seconds
+        self.retry_delay = 3
         
         # Google Calendar setup
         try:
@@ -34,14 +34,15 @@ class StrategicDailyBriefing:
         """Retry wrapper for Notion API calls with exponential backoff"""
         for attempt in range(1, self.max_retries + 1):
             try:
-                print(f"   Attempt {attempt}/{self.max_retries}...")
+                if attempt > 1:
+                    print(f"   Attempt {attempt}/{self.max_retries}...")
                 result = func(*args, **kwargs)
                 if attempt > 1:
                     print(f"   ✅ Succeeded on attempt {attempt}")
                 return result
             except Exception as e:
                 if attempt < self.max_retries:
-                    wait_time = self.retry_delay * attempt  # Exponential backoff
+                    wait_time = self.retry_delay * attempt
                     print(f"   ⚠️ Attempt {attempt} failed: {str(e)[:100]}")
                     print(f"   ⏳ Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
@@ -76,12 +77,12 @@ class StrategicDailyBriefing:
             print(f"Token generation error: {e}")
             return None
 
-    def get_calendar_events_and_blocks(self):
-        """Get today's calendar events and identify time blocks"""
+    def get_calendar_events_today(self):
+        """Get today's calendar events"""
         try:
             access_token = self.get_google_access_token()
             if not access_token:
-                return {"events": ["• Calendar access unavailable"], "blocks": []}
+                return []
                 
             headers = {'Authorization': f'Bearer {access_token}'}
             
@@ -101,45 +102,32 @@ class StrategicDailyBriefing:
             
             if response.status_code != 200:
                 print(f"Calendar API error: {response.status_code}")
-                return {"events": ["• Calendar access error"], "blocks": []}
+                return []
                 
             events_data = response.json()
             events = events_data.get('items', [])
             
             formatted_events = []
-            time_blocks = []
-            
             for event in events:
                 start = event.get('start', {})
-                end = event.get('end', {})
                 summary = event.get('summary', 'No title')
                 
                 start_time = start.get('dateTime', start.get('date', ''))
-                end_time = end.get('dateTime', end.get('date', ''))
-                
                 if 'T' in start_time:
-                    start_str = start_time.split('T')[1][:5]
-                    end_str = end_time.split('T')[1][:5] if 'T' in end_time else ''
-                    time_display = f"{start_str}-{end_str}" if end_str else start_str
+                    time_str = start_time.split('T')[1][:5]
                 else:
-                    time_display = 'All day'
+                    time_str = 'All day'
                 
-                formatted_events.append(f"• {time_display}: {summary}")
-                
-                if any(keyword in summary.lower() for keyword in ['office', 'work', 'meeting', 'focus', 'block', 'forex']):
-                    time_blocks.append(f"• {time_display}: {summary}")
+                formatted_events.append(f"{time_str}: {summary}")
             
-            return {
-                "events": formatted_events if formatted_events else ["• No scheduled events today"],
-                "blocks": time_blocks if time_blocks else ["• No special focus blocks scheduled"]
-            }
+            return formatted_events
             
         except Exception as e:
             print(f"Calendar error: {e}")
-            return {"events": ["• Calendar temporarily unavailable"], "blocks": []}
+            return []
 
     def _query_weekly_checklist(self):
-        """Internal: Query weekly checklist (wrapped with retry)"""
+        """Get unchecked weekly checklist items"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -160,31 +148,31 @@ class StrategicDailyBriefing:
         data = response.json()
         results = data.get('results', [])
         
-        checklist_items = []
+        items = []
         for item in results:
             try:
                 name = 'Untitled task'
                 if 'Name' in item['properties'] and item['properties']['Name']['title']:
                     name = item['properties']['Name']['title'][0]['plain_text']
-                checklist_items.append(f"• {name}")
+                items.append(name)
             except Exception as e:
-                checklist_items.append("• Weekly task (parsing error)")
+                items.append("Weekly task")
         
-        return checklist_items if checklist_items else ["• All weekly items completed! ✅"]
+        return items if items else ["All weekly items completed"]
 
     def get_weekly_checklist_items(self):
-        """Get unchecked items from Weekly Checklist with retry"""
+        """Get unchecked weekly checklist with retry"""
         try:
             print("📋 Getting Weekly Checklist items...")
             items = self.notion_retry(self._query_weekly_checklist)
             print(f"   Found {len(items)} unchecked items")
             return items
         except Exception as e:
-            print(f"❌ Weekly checklist failed after retries: {e}")
-            return ["• Error accessing Weekly Checklist"]
+            print(f"❌ Weekly checklist failed: {e}")
+            return ["Weekly planning review"]
 
     def _query_strategic_goals(self):
-        """Internal: Query strategic goals (wrapped with retry)"""
+        """Get active strategic goals"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -205,7 +193,7 @@ class StrategicDailyBriefing:
         data = response.json()
         results = data.get('results', [])
         
-        strategic_goals = []
+        goals = []
         for goal in results:
             try:
                 name = 'Untitled Goal'
@@ -216,39 +204,25 @@ class StrategicDailyBriefing:
                 if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
                     progress = int(goal['properties']['Progress']['number'])
                 
-                goal_type = 'Goal'
-                if 'Type' in goal['properties'] and goal['properties']['Type']['select']:
-                    goal_type = goal['properties']['Type']['select']['name']
-                
-                due_info = ''
-                if 'Due Date' in goal['properties'] and goal['properties']['Due Date']['date']:
-                    due_date = goal['properties']['Due Date']['date']['start']
-                    try:
-                        due_datetime = datetime.fromisoformat(due_date.replace('Z', '+00:00'))
-                        due_info = f" - Due: {due_datetime.strftime('%m/%d')}"
-                    except:
-                        due_info = f" - Due: {due_date}"
-                
-                strategic_goals.append(f"• [{goal_type}] {name} ({progress}% complete){due_info}")
-                
+                goals.append(f"{name} ({progress}% complete)")
             except Exception as e:
-                strategic_goals.append("• Strategic goal (parsing error)")
+                goals.append("Strategic goal")
         
-        return strategic_goals if strategic_goals else ["• No strategic goals in progress"]
+        return goals if goals else ["Define new strategic goals"]
 
     def get_strategic_goals(self):
-        """Get active strategic goals with retry"""
+        """Get strategic goals with retry"""
         try:
             print("🎯 Getting Strategic Goals...")
             goals = self.notion_retry(self._query_strategic_goals)
             print(f"   Found {len(goals)} active goals")
             return goals
         except Exception as e:
-            print(f"❌ Strategic goals failed after retries: {e}")
-            return ["• Error accessing Strategic Goals"]
+            print(f"❌ Strategic goals failed: {e}")
+            return ["Strategic milestone planning"]
 
-    def _query_journal_patterns(self):
-        """Internal: Query journal patterns (wrapped with retry)"""
+    def _query_recent_journal_entries(self):
+        """Get recent journal entries"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -258,7 +232,7 @@ class StrategicDailyBriefing:
         query_url = f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query"
         query_data = {
             "sorts": [{"property": "Created time", "direction": "descending"}],
-            "page_size": 7
+            "page_size": 3
         }
         
         response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
@@ -269,111 +243,56 @@ class StrategicDailyBriefing:
         data = response.json()
         results = data.get('results', [])
         
-        if len(results) >= 5:
-            return [
-                "• Continue your excellent daily journaling routine around 9:00-9:30 PM",
-                "• Focus tonight on reviewing today's strategic goal progress",
-                "• Consider deep reflection on weekly checklist completion patterns"
-            ]
-        elif len(results) >= 2:
-            return [
-                "• Establish more consistent evening reflection routine (9:00 PM ideal)",
-                "• Tonight: reflect on strategic goal alignment with daily actions",
-                "• Use 15-minute focused reflection sessions for better insights"
-            ]
-        else:
-            return [
-                "• Start simple: 10-minute evening reflection at 9:00 PM",
-                "• Focus on: What went well today? What could be improved?",
-                "• Use journal to track progress on strategic goals and weekly tasks"
-            ]
+        entries = []
+        for entry in results:
+            try:
+                name = 'Journal Entry'
+                if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
+                    name = entry['properties']['Name']['title'][0]['plain_text']
+                    entries.append(name)
+            except Exception as e:
+                entries.append("Recent reflection")
+        
+        return entries if entries else ["Evening reflection routine"]
 
-    def get_journal_reflection_patterns(self):
+    def get_recent_journal_entries(self):
         """Get recent journal entries with retry"""
         try:
-            print("📝 Analyzing Daily Journal patterns...")
-            patterns = self.notion_retry(self._query_journal_patterns)
-            print(f"   Generated {len(patterns)} reflection insights")
-            return patterns
+            print("📝 Getting recent journal entries...")
+            entries = self.notion_retry(self._query_recent_journal_entries)
+            print(f"   Found {len(entries)} recent entries")
+            return entries
         except Exception as e:
-            print(f"❌ Journal analysis failed after retries: {e}")
-            return ["• Evening reflection recommended based on typical productivity patterns"]
+            print(f"❌ Journal entries failed: {e}")
+            return ["Daily reflection practice"]
 
-    def generate_strategic_briefing(self, calendar_data, checklist_items, strategic_goals, reflection_patterns):
+    def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
         """Generate AI-powered strategic daily briefing"""
-        current_date = datetime.now().strftime("%A, %B %d, %Y")
+        current_datetime = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p IST")
         
-        prompt = f"""
-        Create a strategic daily briefing for {current_date} using ONLY the real data provided below.
-        
-        REAL DATA FROM USER'S STRATEGIC SYSTEMS:
-        
-        WEEKLY CHECKLIST (unchecked items):
-        {chr(10).join(checklist_items)}
-        
-        CALENDAR EVENTS TODAY:
-        {chr(10).join(calendar_data['events'])}
-        
-        IMPORTANT TIME BLOCKS:
-        {chr(10).join(calendar_data['blocks'])}
-        
-        STRATEGIC GOALS (in progress):
-        {chr(10).join(strategic_goals)}
-        
-        REFLECTION ANALYSIS:
-        {chr(10).join(reflection_patterns)}
-        
-        INSTRUCTIONS:
-        - Reference SPECIFIC items from the data above by name
-        - Mention actual percentages, times, and task names
-        - Create 3-5 actionable priorities per section
-        - Be concrete about timing based on calendar gaps
-        - Focus on highest impact activities
-        
-        Create exactly these sections:
-        
-        **TODAY'S FOCUS:**
-        • Priority 1: [Most important unchecked weekly task with specific timing]
-        • Priority 2: [Specific calendar preparation or follow-up with time]
-        • Priority 3: [Specific strategic goal advancement with percentage target]
-        • Priority 4: [Additional high-impact item from available data]
-        • Priority 5: [One more strategic priority if data supports it]
-        
-        **ENERGY OPTIMIZATION:**
-        • Peak Hours: [Specific morning/afternoon slots based on calendar gaps]
-        • Reflection Time: [Specific evening time based on analysis and schedule]
-        • Recovery Activities: [Intelligent suggestions based on today's intensity]
-        
-        Use specific names, times, and data points. Be actionable and strategic.
-        """
+        prompt = f"Create a motivational daily briefing for {current_datetime} using this REAL data. Generate exactly 5 numbered insights in the format requested. Each insight should be motivational, specific, and actionable. WEEKLY CHECKLIST TASKS: {'; '.join(checklist_items[:3])}. STRATEGIC GOALS: {'; '.join(strategic_goals[:3])}. RECENT JOURNAL ENTRIES: {'; '.join(journal_entries)}. TODAY'S CALENDAR: {'; '.join(calendar_events[:5])}. Create exactly this format: 1. [motivational insight for weekly task] 2. [motivational insight for strategic goal] 3. [insight from journal pattern] 4. [insight for calendar event] 5. [reward/unwind tip]. Be specific and reference actual data provided."
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a strategic productivity coach who creates highly specific, data-driven daily briefings. Always reference actual data provided rather than generic advice."},
+                    {"role": "system", "content": "You are a motivational productivity coach who creates specific, data-driven daily insights. Always reference the actual data provided and create actionable, inspiring guidance."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=600,
+                max_completion_tokens=400,
                 temperature=0.6
             )
-            return response.choices[0].message.content.strip()
+            
+            insights = response.choices[0].message.content.strip()
+            return insights
+            
         except Exception as e:
             print(f"OpenAI error: {e}")
-            return f"""**TODAY'S FOCUS:**
-• Priority 1: {checklist_items[0] if checklist_items else 'Complete weekly planning review'}
-• Priority 2: {calendar_data['blocks'][0] if calendar_data['blocks'] else calendar_data['events'][0] if calendar_data['events'] else 'Schedule focus time'}
-• Priority 3: {strategic_goals[0] if strategic_goals else 'Define next strategic goal milestone'}
-• Priority 4: Review and update progress on active strategic initiatives
-• Priority 5: Prepare for tomorrow's high-priority activities
-
-**ENERGY OPTIMIZATION:**
-• Peak Hours: 9:00-11:00 AM for strategic work (based on calendar gaps)
-• Reflection Time: {reflection_patterns[0] if reflection_patterns else '9:00 PM evening reflection routine'}
-• Recovery Activities: Schedule breaks between intense focus sessions"""
+            fallback = f"1. Focus on completing your most important weekly task - every small step builds momentum toward your larger goals.\n2. Make measurable progress on your strategic initiatives - consistency creates breakthrough results.\n3. Reflect on recent insights and apply yesterday's lessons to today's opportunities.\n4. Approach today's scheduled activities with intentional focus and present-moment awareness.\n5. Schedule time for renewal between focused work sessions - balance drives sustainable performance."
+            return fallback
 
     def _update_notion_block(self, briefing_content):
-        """Internal: Update Notion page (wrapped with retry)"""
+        """Update Notion page with new briefing format"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -397,8 +316,8 @@ class StrategicDailyBriefing:
                 briefing_block_id = block['id']
                 break
         
-        current_date = datetime.now().strftime("%A, %B %d, %Y")
-        full_content = f"🤖 AI-Generated Morning Insights - {current_date}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n{briefing_content}"
+        current_datetime = datetime.now().strftime("%A, %B %d, %Y - %I:%M %p IST")
+        full_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n{briefing_content}"
         
         new_block_data = {
             "callout": {
@@ -423,13 +342,13 @@ class StrategicDailyBriefing:
             return "created"
 
     def update_daily_briefing_section(self, briefing_content):
-        """Update the Daily Briefing section with retry"""
+        """Update briefing with retry"""
         try:
             print("📝 Updating Notion page...")
             action = self.notion_retry(self._update_notion_block, briefing_content)
-            print(f"   ✅ Successfully {action} daily briefing block!")
+            print(f"   ✅ Successfully {action} daily briefing!")
         except Exception as e:
-            print(f"❌ Failed to update Notion after retries: {str(e)}")
+            print(f"❌ Failed to update Notion: {str(e)}")
 
     def run(self):
         """Main execution"""
@@ -437,22 +356,27 @@ class StrategicDailyBriefing:
         print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        calendar_data = self.get_calendar_events_and_blocks()
+        print("📅 Getting calendar events...")
+        calendar_events = self.get_calendar_events_today()
+        print(f"   Found {len(calendar_events)} events")
+        
+        print("📋 Getting weekly checklist...")
         checklist_items = self.get_weekly_checklist_items()
+        print(f"   Found {len(checklist_items)} items")
+        
+        print("🎯 Getting strategic goals...")
         strategic_goals = self.get_strategic_goals()
-        reflection_patterns = self.get_journal_reflection_patterns()
+        print(f"   Found {len(strategic_goals)} goals")
         
-        print("\n📊 DATA SUMMARY:")
-        print(f"   Calendar: {len(calendar_data['events'])} events, {len(calendar_data['blocks'])} blocks")
-        print(f"   Checklist: {len(checklist_items)} items")
-        print(f"   Goals: {len(strategic_goals)} active")
-        print(f"   Patterns: {len(reflection_patterns)} insights")
+        print("📝 Getting recent journal entries...")
+        journal_entries = self.get_recent_journal_entries()
+        print(f"   Found {len(journal_entries)} entries")
         
-        print("\n🧠 Generating AI briefing...")
-        briefing = self.generate_strategic_briefing(calendar_data, checklist_items, strategic_goals, reflection_patterns)
+        print("\n🧠 Generating personalized insights...")
+        briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
         
         self.update_daily_briefing_section(briefing)
-        print(f"\n✅ Process completed at: {datetime.now().strftime('%H:%M:%S IST')}")
+        print(f"\n✅ Completed at: {datetime.now().strftime('%H:%M:%S IST')}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
