@@ -2,15 +2,15 @@ name: Daily Automation Suite
 
 on:
   schedule:
-    # Daily quote at 6:00 AM IST (00:30 UTC) Set at 3 AM 
-    - cron: '30 21 * * *'
-    # Daily briefing at 6:15 AM IST (00:45 UTC) Set at 3.15 AM
-    - cron: '45 21 * * *'
-  workflow_dispatch:  # Manual trigger
+    # Daily quote at 6:00 AM IST (00:30 UTC)
+    - cron: '30 0 * * *'
+    # Daily briefing at 6:15 AM IST (00:45 UTC)
+    - cron: '45 0 * * *'
+  workflow_dispatch:  # Manual trigger for testing
 
 jobs:
-  daily-quote:
-    name: Generate Daily Quote
+  media-inspired-quote:
+    name: Generate Media-Inspired Daily Quote
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -24,17 +24,20 @@ jobs:
       - name: Install dependencies
         run: pip install openai requests
 
-      - name: Run Daily Quote Script
+      - name: Generate Media-Inspired Daily Quote
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          MOVIES_DB_ID: ${{ secrets.MOVIES_DB_ID }}
+          BOOKS_DB_ID: ${{ secrets.BOOKS_DB_ID }}
+          GAMES_DB_ID: ${{ secrets.GAMES_DB_ID }}
         run: python daily_quote.py
 
-  daily-briefing:
-    name: Generate Daily Briefing & Diagnostics
+  strategic-daily-briefing:
+    name: Generate Strategic Daily Briefing
     runs-on: ubuntu-latest
-    needs: daily-quote   # Ensures quote runs before briefing
+    needs: media-inspired-quote  # Runs after quote completes
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -45,10 +48,9 @@ jobs:
           python-version: '3.9'
 
       - name: Install dependencies
-        # Adds all possible dependencies for Google API JWT and HTTP libraries
         run: pip install openai requests PyJWT cryptography google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
 
-      - name: Run Daily Briefing Script
+      - name: Generate Strategic Daily Briefing
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
