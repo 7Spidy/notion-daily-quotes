@@ -179,7 +179,6 @@ class MediaInspiredQuoteGenerator:
             
             Format: "Quote text" - Author/Character (or "Inspired by {selected_media['name']}" if original)
             ""
-        
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-5-mini",
