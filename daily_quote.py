@@ -2,7 +2,7 @@ import openai
 import requests
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
 import random
 
@@ -20,6 +20,12 @@ class MediaInspiredQuoteGenerator:
         # Retry configuration
         self.max_retries = 3
         self.retry_delay = 2
+
+    def get_current_ist_time(self):
+        """Get current IST time correctly"""
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist)
+        return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
 
     def notion_retry(self, func, *args, **kwargs):
         """Retry wrapper for Notion API calls"""
@@ -150,87 +156,107 @@ class MediaInspiredQuoteGenerator:
         
         return quote.strip()
 
-    def try_get_quote_from_media(self, media_item):
-        """Try to get a real quote from a specific media item"""
+    def try_get_quote_from_media_multiple_attempts(self, media_item):
+        """Try MUCH HARDER to get a real quote from specific media - multiple approaches"""
         media_context = ""
         if media_item['type'] == 'Books' and media_item.get('context', {}).get('author'):
             media_context = f" by {media_item['context']['author']}"
         elif media_item['type'] == 'Movies & TV' and media_item.get('context', {}).get('type'):
             media_context = f" ({media_item['context']['type']})"
-            
-        prompt = f"Find a real, authentic, memorable quote from '{media_item['name']}'{media_context}. The quote must be an EXACT quote that actually appears in {media_item['name']}. Look for quotes about growth, determination, learning, overcoming challenges, wisdom, or achieving goals. Provide the exact quote as spoken/written in the original source. Format: Quote - Character/Speaker Name, {media_item['name']}. If you don't know any real quotes from this specific {media_item['type'].lower()}, respond with exactly: NO_QUOTE_FOUND"
         
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a quote researcher who finds ONLY real, authentic quotes from actual books, movies, TV shows, and video games. You never create, modify, or paraphrase quotes. If you don't know an exact quote from the requested source, respond with exactly 'NO_QUOTE_FOUND'."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_completion_tokens=150,
-                temperature=0.1
-            )
+        # Try 3 different approaches for each media item
+        approaches = [
+            f"Find a famous, memorable quote from '{media_item['name']}'{media_context}. Look for the most well-known dialogue or line that people remember from this {media_item['type'].lower()}. Provide the exact quote as it appears in the source. Format: Quote - Character/Speaker, {media_item['name']}. If you don't know any real quotes, respond exactly: NO_QUOTE_FOUND",
             
-            quote = response.choices[0].message.content.strip()
+            f"What is the most inspirational or motivational quote from '{media_item['name']}'{media_context}? Look for quotes about perseverance, growth, wisdom, or overcoming challenges. Provide the exact quote as spoken/written in the original {media_item['type'].lower()}. Format: Quote - Character/Speaker, {media_item['name']}. If unsure, respond: NO_QUOTE_FOUND",
             
-            # Check if AI couldn't find a quote
-            if "NO_QUOTE_FOUND" in quote or "sorry" in quote.lower() or "don't have access" in quote.lower():
-                return None
+            f"Recall any iconic dialogue or memorable line from '{media_item['name']}'{media_context} that relates to personal development, success, or life lessons. Provide the precise quote from the source material. Format: Quote - Character/Speaker, {media_item['name']}. If you cannot recall exact quotes, respond: NO_QUOTE_FOUND"
+        ]
+        
+        for approach_num, prompt in enumerate(approaches, 1):
+            try:
+                print(f"      → Approach {approach_num}: Looking for {['famous quotes', 'inspirational quotes', 'iconic dialogue'][approach_num-1]}")
                 
-            # Clean formatting
-            quote = self.clean_quote_formatting(quote)
-            return quote
-            
-        except Exception as e:
-            print(f"   ⚠️ Quote attempt failed: {e}")
-            return None
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system", "content": "You are an expert in books, movies, TV shows, and video games. You know exact quotes from popular media. If you don't know a real quote from the specific source, respond exactly with 'NO_QUOTE_FOUND'. Never create or modify quotes."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_completion_tokens=150,
+                    temperature=0.1
+                )
+                
+                quote = response.choices[0].message.content.strip()
+                
+                # Check if AI found a real quote
+                if ("NO_QUOTE_FOUND" not in quote and 
+                    "sorry" not in quote.lower() and 
+                    "don't have access" not in quote.lower() and
+                    "don't know" not in quote.lower() and
+                    "cannot recall" not in quote.lower()):
+                    
+                    quote = self.clean_quote_formatting(quote)
+                    print(f"      ✅ Found quote via approach {approach_num}")
+                    return quote
+                else:
+                    print(f"      ❌ Approach {approach_num} failed")
+                    
+            except Exception as e:
+                print(f"      ⚠️ Approach {approach_num} error: {e}")
+        
+        return None
 
     def generate_media_inspired_quote(self, all_media):
-        """Generate a quote with smart fallback logic"""
+        """Generate a quote with MUCH more persistent search"""
         current_date = datetime.now().strftime("%B %d, %Y")
         
         if not all_media:
-            print("   No media found, using general inspirational quotes")
-            fallback_quotes = [
+            print("   No media found, using authentic famous quotes")
+            famous_quotes = [
                 '"The way to get started is to quit talking and begin doing." - Walt Disney',
                 '"Innovation distinguishes between a leader and a follower." - Steve Jobs',
                 '"Success is not final, failure is not fatal: it is the courage to continue that counts." - Winston Churchill'
             ]
-            return random.choice(fallback_quotes)
+            return random.choice(famous_quotes)
         
-        # Shuffle media list for randomness
+        # Shuffle media and try up to 10 different items with multiple approaches each
         shuffled_media = all_media.copy()
         random.shuffle(shuffled_media)
         
-        # Try up to 5 different media items to find a real quote
-        for attempt in range(min(5, len(shuffled_media))):
+        max_media_attempts = min(10, len(shuffled_media))
+        print(f"   Trying {max_media_attempts} different media items with 3 approaches each...")
+        
+        for attempt in range(max_media_attempts):
             selected_media = shuffled_media[attempt]
-            print(f"   Attempt {attempt + 1}: Trying {selected_media['name']} ({selected_media['type']})")
+            print(f"   🎯 Media {attempt + 1}/{max_media_attempts}: {selected_media['name']} ({selected_media['type']})")
             
-            quote = self.try_get_quote_from_media(selected_media)
+            quote = self.try_get_quote_from_media_multiple_attempts(selected_media)
             
             if quote:
-                print(f"   ✅ Found authentic quote from {selected_media['name']}")
+                print(f"   🎉 SUCCESS! Found authentic quote from {selected_media['name']}")
                 return quote
             else:
-                print(f"   ❌ No quote found for {selected_media['name']}, trying next...")
+                print(f"   ❌ No quotes found in {selected_media['name']}, trying next media...")
         
-        # If no quotes found from any media, use well-known media quotes
-        print("   Using backup famous media quotes")
-        famous_media_quotes = [
+        # Final fallback with well-known media quotes
+        print("   📚 Using backup authentic media quotes from popular sources")
+        authentic_media_quotes = [
             '"May the Force be with you." - Obi-Wan Kenobi, Star Wars',
-            '"I am inevitable." - Thanos, Avengers',
+            '"I am inevitable." - Thanos, Avengers: Endgame',
             '"With great power comes great responsibility." - Uncle Ben, Spider-Man',
             '"The needs of the many outweigh the needs of the few." - Spock, Star Trek',
-            '"I\'ll be back." - Terminator, The Terminator',
-            '"Life is like a box of chocolates." - Forrest Gump, Forrest Gump'
+            '"Why so serious?" - The Joker, The Dark Knight',
+            '"Life is like a box of chocolates, you never know what you\'re gonna get." - Forrest Gump, Forrest Gump',
+            '"I\'ll be back." - The Terminator, The Terminator',
+            '"Here\'s looking at you, kid." - Rick Blaine, Casablanca'
         ]
         
-        return random.choice(famous_media_quotes)
+        return random.choice(authentic_media_quotes)
 
     def _update_notion_page(self, quote):
         """Internal method to update Notion page (wrapped with retry)"""
-        current_date = datetime.now().strftime("%B %d, %Y")
+        current_date = self.get_current_ist_time().split(' - ')[0]  # Get just the date part
         
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
@@ -299,27 +325,29 @@ class MediaInspiredQuoteGenerator:
 
     def run(self):
         """Main execution function"""
-        print(f"✨ Authentic Media Quote Generator (All Media)")
-        print(f"🕐 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}")
+        print(f"✨ Authentic Media Quote Generator (Enhanced Search)")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
         print("🎯 Analyzing ALL media consumption...")
         all_media = self.get_all_media_consumption()
         
         if all_media:
-            print(f"📊 Found {len(all_media)} total media items:")
-            for item in all_media[:5]:
+            print(f"📊 Found {len(all_media)} total media items")
+            status_counts = {}
+            for item in all_media:
                 status = item.get('context', {}).get('status', 'Unknown')
-                print(f"   • {item['name']} ({item['type']}) - {status}")
+                status_counts[status] = status_counts.get(status, 0) + 1
+            print(f"   Status breakdown: {status_counts}")
         else:
-            print("📊 No media found - using general authentic quotes")
+            print("📊 No media found - using famous authentic quotes")
         
-        print("\n🤖 Finding authentic quote from media library...")
+        print("\n🎯 Searching extensively for authentic quotes...")
         quote = self.generate_media_inspired_quote(all_media)
-        print(f"   Selected quote: {quote[:100]}...")
+        print(f"   Final quote selected: {quote[:100]}...")
         
         self.update_notion_page(quote)
-        print(f"\n✅ Process completed at: {datetime.now().strftime('%H:%M:%S IST')}")
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     generator = MediaInspiredQuoteGenerator()
