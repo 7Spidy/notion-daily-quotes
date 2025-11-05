@@ -10,7 +10,6 @@ jobs:
   authentic-media-quote:
     name: Generate Authentic Media Quote
     runs-on: ubuntu-latest
-    if: github.event.schedule == '0 19 * * *'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,7 +35,7 @@ jobs:
   strategic-daily-briefing:
     name: Generate Strategic Daily Briefing
     runs-on: ubuntu-latest
-    if: github.event.schedule == '15 19 * * *'
+    needs: authentic-media-quote
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
