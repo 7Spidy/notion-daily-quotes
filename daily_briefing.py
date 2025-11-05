@@ -247,7 +247,6 @@ class StrategicDailyBriefing:
             "Notion-Version": "2022-06-28"
         }
         
-        # Get page blocks (content)
         blocks_url = f"https://api.notion.com/v1/blocks/{page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=15)
         
@@ -257,7 +256,6 @@ class StrategicDailyBriefing:
         blocks_data = response.json()
         blocks = blocks_data.get('results', [])
         
-        # Extract text content from blocks
         content_parts = []
         
         def extract_text_from_rich_text(rich_text_array):
@@ -282,17 +280,17 @@ class StrategicDailyBriefing:
                 elif block_type == 'heading_1':
                     text = extract_text_from_rich_text(block['heading_1']['rich_text'])
                     if text.strip():
-                        content_parts.append(f"\n# {text}")
+                        content_parts.append(f"# {text}")
                 
                 elif block_type == 'heading_2':
                     text = extract_text_from_rich_text(block['heading_2']['rich_text'])
                     if text.strip():
-                        content_parts.append(f"\n## {text}")
+                        content_parts.append(f"## {text}")
                 
                 elif block_type == 'heading_3':
                     text = extract_text_from_rich_text(block['heading_3']['rich_text'])
                     if text.strip():
-                        content_parts.append(f"\n### {text}")
+                        content_parts.append(f"### {text}")
                 
                 elif block_type == 'bulleted_list_item':
                     text = extract_text_from_rich_text(block['bulleted_list_item']['rich_text'])
@@ -325,7 +323,7 @@ class StrategicDailyBriefing:
                 print(f"   ⚠️ Error parsing block {block_type}: {e}")
         
         full_content = '\n'.join(content_parts)
-        return full_content[:1500] if full_content else "No content found"  # Limit to 1500 chars
+        return full_content[:1000] if full_content else "No content found"  # Reduced limit for API
 
     def _query_recent_journal_entries_with_page_content(self):
         """Get recent journal entries WITH full page content"""
@@ -338,7 +336,7 @@ class StrategicDailyBriefing:
         query_url = f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query"
         query_data = {
             "sorts": [{"property": "Created time", "direction": "descending"}],
-            "page_size": 3  # Get last 3 entries
+            "page_size": 2  # Reduced to prevent content overload
         }
         
         response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
@@ -371,7 +369,7 @@ class StrategicDailyBriefing:
                 # Get page ID to fetch content
                 page_id = entry['id']
                 
-                print(f"   📖 Reading page content for: {title} ({created_date})")
+                print(f"   📖 Reading: {title} ({created_date})")
                 
                 # Fetch the actual page content
                 page_content = self._get_page_content(page_id)
@@ -384,7 +382,7 @@ class StrategicDailyBriefing:
                     'page_id': page_id
                 })
                 
-                print(f"      Content length: {len(page_content)} characters")
+                print(f"      ✅ Content loaded: {len(page_content)} characters")
                 
             except Exception as e:
                 print(f"   ⚠️ Error processing journal entry: {e}")
@@ -410,14 +408,6 @@ class StrategicDailyBriefing:
             print("📝 Getting detailed journal entries with page content...")
             entries = self.notion_retry(self._query_recent_journal_entries_with_page_content)
             print(f"   ✅ Successfully loaded {len(entries)} journal entries with content")
-            
-            # Preview journal content for debugging
-            for i, entry in enumerate(entries[:2], 1):
-                areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-                print(f"   📖 Journal {i}: '{entry['title']}' ({entry['date']}) - {areas_text}")
-                preview = entry['content'][:150].replace('\n', ' ')
-                print(f"      📝 Content preview: {preview}...")
-            
             return entries
         except Exception as e:
             print(f"❌ Journal content reading failed: {e}")
@@ -429,47 +419,79 @@ class StrategicDailyBriefing:
                 'page_id': ''
             }]
 
+    def sanitize_content_for_notion(self, content):
+        """Sanitize content to prevent Notion API errors"""
+        if not content:
+            return "Daily briefing content unavailable"
+        
+        # Remove problematic characters that cause Notion API issues
+        import re
+        
+        # Remove control characters and non-printable characters
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        
+        # Replace problematic unicode characters
+        content = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # Limit content size to prevent API errors
+        max_content_length = 1800  # Safe limit for Notion blocks
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+        
+        # Ensure content is not empty
+        if not content.strip():
+            content = "Daily briefing generated successfully"
+        
+        return content
+
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
         """Generate AI-powered strategic daily briefing with deep journal content analysis"""
         current_datetime = self.get_current_ist_time()
         
-        # Prepare detailed journal content for deep analysis
-        journal_analysis_data = []
-        for i, entry in enumerate(journal_entries, 1):
-            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General reflection'
-            journal_analysis_data.append(f"ENTRY {i}: Title: '{entry['title']}' | Date: {entry['date']} | Life Areas: {areas_text} | FULL CONTENT: {entry['content']}")
+        # Prepare condensed journal content for analysis (to prevent token overload)
+        journal_summaries = []
+        for i, entry in enumerate(journal_entries[:2], 1):  # Only use top 2 entries
+            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
+            # Limit content per entry to prevent overload
+            content_summary = entry['content'][:400] if entry['content'] else 'No content'
+            journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
         
-        journal_text = ' || '.join(journal_analysis_data)
+        journal_text = ' | '.join(journal_summaries)
         
-        prompt = f"Create exactly 5 numbered motivational insights using this REAL data. Do NOT include any intro text - start directly with numbered list. IMPORTANT: Never suggest activities between 10:00 PM and 6:30 AM (sleep time). WEEKLY TASKS (unchecked): {'; '.join(checklist_items[:3])}. STRATEGIC GOALS (active): {'; '.join(strategic_goals[:3])}. COMPLETE JOURNAL ENTRIES WITH FULL CONTENT: {journal_text}. TODAY'S CALENDAR: {'; '.join(calendar_events[:5])}. Format requirements: 1. [insight about specific weekly task with optimal 7AM-9PM timing] 2. [insight about specific strategic goal with daytime timing reference] 3. [DEEP JOURNAL ANALYSIS: Read and analyze the ACTUAL journal content provided above. Comment on specific themes, emotions, thoughts, patterns, challenges, or victories mentioned in the journal entries. Provide thoughtful motivation or reflection based on what was actually written. Reference specific journal content, life areas, and dates. Be insightful and supportive like a personal coach who has read your private thoughts.] 4. [insight about specific calendar event with prep timing 6:30AM-9:30PM] 5. [evening reward/unwind tip 7PM-9:30PM based on journal emotional tone and free time]. Be specific, reference actual data including detailed journal content, respect sleep schedule."
+        prompt = f"Create exactly 5 numbered insights. No intro text. SLEEP RESTRICTION: Never suggest activities 10:00 PM - 6:30 AM. WEEKLY TASKS: {'; '.join(checklist_items[:2])}. STRATEGIC GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL ENTRIES: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight 7AM-9PM] 2.[strategic goal insight daytime] 3.[DEEP ANALYSIS of actual journal content - reference specific thoughts, emotions, patterns from the journal text provided] 4.[calendar event insight 6:30AM-9:30PM] 5.[evening reward tip 7PM-9:30PM]. Be specific and reference actual data."
         
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a personal life coach and journal analyst who reads complete journal entries to provide deep, thoughtful insights. For point 3 specifically: analyze the actual journal content provided - comment on themes, emotions, challenges, victories, patterns, and provide supportive motivation based on what was actually written. Be like a trusted coach who has read someone's private thoughts. Create exactly 5 numbered insights with no intro text. Never suggest activities between 10:00 PM and 6:30 AM."},
+                    {"role": "system", "content": "You are a personal coach who analyzes journal content. For point 3: read the actual journal content and provide specific insights about themes, emotions, challenges mentioned. No activities between 10 PM-6:30 AM. Start with '1.' directly."},
                     {"role": "user", "content": prompt}
                 ],
-                max_completion_tokens=600,  # Increased for deeper journal analysis
-                temperature=0.75  # Higher for more insightful, empathetic responses
+                max_completion_tokens=450,  # Reasonable limit
+                temperature=0.7
             )
             
             insights = response.choices[0].message.content.strip()
+            
+            # Clean the insights for Notion API
+            insights = self.sanitize_content_for_notion(insights)
+            
             return insights
             
         except Exception as e:
             print(f"OpenAI error: {e}")
-            fallback = "1. Focus on completing your most important weekly task during peak morning hours (8:00-11:00 AM) - momentum builds with consistent action.\n2. Make measurable progress on your strategic initiatives during focused afternoon sessions (2:00-5:00 PM) - small steps create breakthrough results.\n3. Your recent journal entries reveal thoughtful self-reflection and growth mindset - continue this valuable practice as it builds emotional intelligence and provides clarity for decision-making.\n4. Approach today's scheduled activities with intentional focus during your productive daytime hours.\n5. Schedule relaxation time between 8:00-9:30 PM before your sleep routine - balance supports sustainable high performance."
-            return fallback
+            fallback = "1. Complete your priority weekly task during focused morning hours (8:00-11:00 AM) - consistency builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - small progress compounds.\n3. Your recent journal entries show thoughtful self-reflection and commitment to growth - continue this valuable practice as it enhances self-awareness.\n4. Approach today's scheduled activities with intentional preparation during your peak hours.\n5. Schedule renewal time between 8:00-9:30 PM before sleep - sustainable performance requires balance."
+            return self.sanitize_content_for_notion(fallback)
 
-    def _update_notion_block(self, briefing_content):
-        """Update Notion page with new briefing format"""
+    def _update_notion_block_safe(self, briefing_content):
+        """Update Notion page with enhanced error handling"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
         
+        # Get current blocks
         blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
@@ -478,6 +500,7 @@ class StrategicDailyBriefing:
             
         blocks = response.json()
         
+        # Find existing briefing block
         briefing_block_id = None
         for block in blocks.get('results', []):
             if (block['type'] == 'callout' and 
@@ -487,47 +510,85 @@ class StrategicDailyBriefing:
                 briefing_block_id = block['id']
                 break
         
+        # Sanitize the briefing content
+        briefing_content = self.sanitize_content_for_notion(briefing_content)
+        
         current_datetime = self.get_current_ist_time()
         full_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n{briefing_content}"
         
+        # Ensure full content is within safe limits
+        full_content = self.sanitize_content_for_notion(full_content)
+        
         new_block_data = {
             "callout": {
-                "rich_text": [{"type": "text", "text": {"content": full_content}}],
-                "icon": {"emoji": "🤖"},
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": full_content
+                        }
+                    }
+                ],
+                "icon": {
+                    "emoji": "🤖"
+                },
                 "color": "blue_background"
             }
         }
         
-        if briefing_block_id:
-            update_url = f"https://api.notion.com/v1/blocks/{briefing_block_id}"
-            response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=10)
-            if response.status_code != 200:
-                raise Exception(f"Failed to update block: HTTP {response.status_code}")
-            return "updated"
-        else:
-            create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
-            payload = {"children": [new_block_data]}
-            response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
-            if response.status_code != 200:
-                raise Exception(f"Failed to create block: HTTP {response.status_code}")
-            return "created"
+        try:
+            if briefing_block_id:
+                # Update existing block
+                update_url = f"https://api.notion.com/v1/blocks/{briefing_block_id}"
+                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=10)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:200]}")
+                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
+                    
+                return "updated"
+            else:
+                # Create new block
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block_data]}
+                response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:200]}")
+                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
+                    
+                return "created"
+                
+        except Exception as e:
+            print(f"   💡 Notion API detailed error: {str(e)}")
+            print(f"   📊 Content length: {len(full_content)} characters")
+            raise e
 
     def update_daily_briefing_section(self, briefing_content):
-        """Update briefing with retry"""
+        """Update briefing with enhanced retry and error handling"""
         try:
-            print("📝 Updating Notion page with deep journal insights...")
-            action = self.notion_retry(self._update_notion_block, briefing_content)
+            print("📝 Updating Notion page with safe content handling...")
+            action = self.notion_retry(self._update_notion_block_safe, briefing_content)
             print(f"   ✅ Successfully {action} daily briefing!")
         except Exception as e:
-            print(f"❌ Failed to update Notion: {str(e)}")
+            print(f"❌ Failed to update Notion after all attempts: {str(e)}")
+            
+            # Try a minimal fallback update
+            try:
+                print("   🔄 Attempting minimal fallback update...")
+                minimal_content = f"Daily briefing generated at {self.get_current_ist_time()}"
+                self.notion_retry(self._update_notion_block_safe, minimal_content)
+                print("   ✅ Fallback update successful")
+            except Exception as fallback_error:
+                print(f"   ❌ Even fallback failed: {fallback_error}")
 
     def run(self):
         """Main execution"""
-        print(f"🎯 Strategic Daily Briefing Generator (Deep Journal Content Analysis)")
+        print(f"🎯 Strategic Daily Briefing Generator (Deep Journal Page Analysis)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
         print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
-        print(f"📖 Journal analysis: Reading full page content for deeper insights\n")
+        print(f"📖 Journal analysis: Reading actual page content (not database fields)\n")
         
         print("📅 Getting calendar events...")
         calendar_events = self.get_calendar_events_today()
@@ -541,15 +602,16 @@ class StrategicDailyBriefing:
         strategic_goals = self.get_strategic_goals()
         print(f"   Found {len(strategic_goals)} goals")
         
-        print("📝 Reading detailed journal page content...")
+        print("📝 Reading actual journal page content...")
         journal_entries = self.get_recent_journal_entries_with_page_content()
-        print(f"   ✅ Analyzed {len(journal_entries)} complete journal entries")
+        print(f"   ✅ Analyzed {len(journal_entries)} complete journal page contents")
         
-        print("\n🧠 Generating deep journal-content-aware insights...")
+        print("\n🧠 Generating insights from actual journal page content...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
+        print(f"   📊 Generated briefing: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
-        print(f"\n✅ Completed at: {self.get_current_ist_time()}")
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
