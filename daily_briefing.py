@@ -323,7 +323,7 @@ class StrategicDailyBriefing:
                 print(f"   ⚠️ Error parsing block {block_type}: {e}")
         
         full_content = '\n'.join(content_parts)
-        return full_content[:1000] if full_content else "No content found"  # Reduced limit for API
+        return full_content[:1000] if full_content else "No content found"
 
     def _query_recent_journal_entries_with_page_content(self):
         """Get recent journal entries WITH full page content"""
@@ -336,7 +336,7 @@ class StrategicDailyBriefing:
         query_url = f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query"
         query_data = {
             "sorts": [{"property": "Created time", "direction": "descending"}],
-            "page_size": 2  # Reduced to prevent content overload
+            "page_size": 2
         }
         
         response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
@@ -424,7 +424,6 @@ class StrategicDailyBriefing:
         if not content:
             return "Daily briefing content unavailable"
         
-        # Remove problematic characters that cause Notion API issues
         import re
         
         # Remove control characters and non-printable characters
@@ -434,7 +433,7 @@ class StrategicDailyBriefing:
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
         
         # Limit content size to prevent API errors
-        max_content_length = 1800  # Safe limit for Notion blocks
+        max_content_length = 1800
         if len(content) > max_content_length:
             content = content[:max_content_length] + "..."
         
@@ -445,33 +444,40 @@ class StrategicDailyBriefing:
         return content
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-        """Generate AI-powered strategic daily briefing with deep journal content analysis"""
+        """Generate AI-powered strategic daily briefing with personal language"""
         current_datetime = self.get_current_ist_time()
         
-        # Prepare condensed journal content for analysis (to prevent token overload)
+        # Prepare condensed journal content for analysis
         journal_summaries = []
-        for i, entry in enumerate(journal_entries[:2], 1):  # Only use top 2 entries
+        for i, entry in enumerate(journal_entries[:2], 1):
             areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-            # Limit content per entry to prevent overload
             content_summary = entry['content'][:400] if entry['content'] else 'No content'
             journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
         
         journal_text = ' | '.join(journal_summaries)
         
-        prompt = f"Create exactly 5 numbered insights. No intro text. SLEEP RESTRICTION: Never suggest activities 10:00 PM - 6:30 AM. WEEKLY TASKS: {'; '.join(checklist_items[:2])}. STRATEGIC GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL ENTRIES: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight 7AM-9PM] 2.[strategic goal insight daytime] 3.[DEEP ANALYSIS of actual journal content - reference specific thoughts, emotions, patterns from the journal text provided] 4.[calendar event insight 6:30AM-9:30PM] 5.[evening reward tip 7PM-9:30PM]. Be specific and reference actual data."
+        prompt = f"Create exactly 5 numbered insights. No intro text. SLEEP RESTRICTION: Never suggest activities 10:00 PM - 6:30 AM. WEEKLY TASKS: {'; '.join(checklist_items[:2])}. STRATEGIC GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL ENTRIES: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight 7AM-9PM] 2.[strategic goal insight daytime] 3.[DEEP ANALYSIS of journal content - reference specific thoughts, emotions, patterns. Use 'you' and 'your' language - never say 'author' or 'the author' or 'writer'. Always address directly as 'you' since these are personal journal entries] 4.[calendar event insight 6:30AM-9:30PM] 5.[evening reward tip 7PM-9:30PM]. Be specific, use personal 'you' language, reference actual journal content."
         
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are a personal coach who analyzes journal content. For point 3: read the actual journal content and provide specific insights about themes, emotions, challenges mentioned. No activities between 10 PM-6:30 AM. Start with '1.' directly."},
+                    {"role": "system", "content": "You are a personal life coach analyzing someone's private journal entries. CRITICAL: Always use 'you' and 'your' when referring to the journal writer - NEVER say 'author', 'the author', 'writer', or 'the writer'. These are personal journal entries, so address the person directly. For point 3: analyze the actual journal content and provide personal insights about themes, emotions, challenges using 'you' language. No activities between 10 PM-6:30 AM. Start directly with '1.'"},
                     {"role": "user", "content": prompt}
                 ],
-                max_completion_tokens=450,  # Reasonable limit
+                max_completion_tokens=450,
                 temperature=0.7
             )
             
             insights = response.choices[0].message.content.strip()
+            
+            # Additional safeguard: Replace any remaining "author" references
+            insights = insights.replace("the author", "you")
+            insights = insights.replace("Author", "You")
+            insights = insights.replace("author", "you")
+            insights = insights.replace("writer", "you")
+            insights = insights.replace("the writer", "you")
+            insights = insights.replace("Writer", "You")
             
             # Clean the insights for Notion API
             insights = self.sanitize_content_for_notion(insights)
@@ -480,7 +486,7 @@ class StrategicDailyBriefing:
             
         except Exception as e:
             print(f"OpenAI error: {e}")
-            fallback = "1. Complete your priority weekly task during focused morning hours (8:00-11:00 AM) - consistency builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - small progress compounds.\n3. Your recent journal entries show thoughtful self-reflection and commitment to growth - continue this valuable practice as it enhances self-awareness.\n4. Approach today's scheduled activities with intentional preparation during your peak hours.\n5. Schedule renewal time between 8:00-9:30 PM before sleep - sustainable performance requires balance."
+            fallback = "1. Complete your priority weekly task during focused morning hours (8:00-11:00 AM) - consistency builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - small progress compounds.\n3. Your recent journal entries show thoughtful self-reflection and commitment to growth - continue this valuable practice as it enhances your self-awareness.\n4. Approach today's scheduled activities with intentional preparation during your peak hours.\n5. Schedule renewal time between 8:00-9:30 PM before sleep - sustainable performance requires balance."
             return self.sanitize_content_for_notion(fallback)
 
     def _update_notion_block_safe(self, briefing_content):
@@ -567,7 +573,7 @@ class StrategicDailyBriefing:
     def update_daily_briefing_section(self, briefing_content):
         """Update briefing with enhanced retry and error handling"""
         try:
-            print("📝 Updating Notion page with safe content handling...")
+            print("📝 Updating Notion page with personal insights...")
             action = self.notion_retry(self._update_notion_block_safe, briefing_content)
             print(f"   ✅ Successfully {action} daily briefing!")
         except Exception as e:
@@ -584,11 +590,11 @@ class StrategicDailyBriefing:
 
     def run(self):
         """Main execution"""
-        print(f"🎯 Strategic Daily Briefing Generator (Deep Journal Page Analysis)")
+        print(f"🎯 Strategic Daily Briefing Generator (Personal Journal Analysis)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
         print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
-        print(f"📖 Journal analysis: Reading actual page content (not database fields)\n")
+        print(f"📖 Journal analysis: Personal 'you' language for direct connection\n")
         
         print("📅 Getting calendar events...")
         calendar_events = self.get_calendar_events_today()
@@ -602,13 +608,13 @@ class StrategicDailyBriefing:
         strategic_goals = self.get_strategic_goals()
         print(f"   Found {len(strategic_goals)} goals")
         
-        print("📝 Reading actual journal page content...")
+        print("📝 Reading your personal journal content...")
         journal_entries = self.get_recent_journal_entries_with_page_content()
-        print(f"   ✅ Analyzed {len(journal_entries)} complete journal page contents")
+        print(f"   ✅ Analyzed {len(journal_entries)} of your journal entries")
         
-        print("\n🧠 Generating insights from actual journal page content...")
+        print("\n🧠 Generating personalized insights from your journal...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
-        print(f"   📊 Generated briefing: {len(briefing)} characters")
+        print(f"   📊 Generated personal briefing: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
         print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
