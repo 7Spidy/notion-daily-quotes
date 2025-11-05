@@ -421,4 +421,197 @@ class StrategicDailyBriefing:
 
     def sanitize_content_for_notion(self, content):
         """Sanitize content to prevent Notion API errors and truncation"""
-        if
+        if not content:
+            return "Daily briefing content unavailable"
+        
+        import re
+        
+        # Remove control characters and non-printable characters
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        
+        # Replace problematic unicode characters
+        content = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # INCREASED LIMITS to prevent truncation
+        max_content_length = 1950  # Notion allows up to 2000 characters per text block
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+            print(f"   ⚠️ Content truncated from {len(content)} to {max_content_length} characters")
+        
+        # Ensure content is not empty
+        if not content.strip():
+            content = "Daily briefing generated successfully"
+        
+        return content
+
+    def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
+        """Generate concise but complete strategic daily briefing"""
+        current_datetime = self.get_current_ist_time()
+        
+        # Prepare condensed journal content for analysis
+        journal_summaries = []
+        for i, entry in enumerate(journal_entries[:2], 1):
+            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
+            content_summary = entry['content'][:300] if entry['content'] else 'No content'  # Reduced to save space
+            journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
+        
+        journal_text = ' | '.join(journal_summaries)
+        
+        prompt = f"Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight with timing 7AM-9PM - be concise] 2.[strategic goal insight daytime - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar insight 6:30AM-9:30PM - be concise] 5.[evening reward 7PM-9:30PM - be concise]. Keep each point under 60 words to prevent truncation."
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a personal coach analyzing someone's journal. CRITICAL: Use 'you/your' - NEVER 'author/writer'. For point 3: analyze actual journal content for themes/emotions using personal language. Keep all insights CONCISE (2-3 sentences max per point). No activities 10PM-6:30AM. Start with '1.' directly."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_completion_tokens=350,  # Reduced to ensure conciseness
+                temperature=0.65
+            )
+            
+            insights = response.choices[0].message.content.strip()
+            
+            # Clean up author references
+            insights = insights.replace("the author", "you")
+            insights = insights.replace("Author", "You")
+            insights = insights.replace("author", "you")
+            insights = insights.replace("writer", "you")
+            insights = insights.replace("the writer", "you")
+            insights = insights.replace("Writer", "You")
+            
+            return insights
+            
+        except Exception as e:
+            print(f"OpenAI error: {e}")
+            fallback = "1. Complete your priority weekly task during morning focus hours (8:00-11:00 AM) - consistent action builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - progress compounds daily.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Approach today's scheduled activities with intentional preparation during your peak productive hours.\n5. Schedule relaxation time between 8:00-9:30 PM before sleep - balance supports sustainable performance."
+            return fallback
+
+    def _update_notion_block_safe(self, briefing_content):
+        """Update Notion page with enhanced error handling and size management"""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        # Get current blocks
+        blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+        response = requests.get(blocks_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get blocks: HTTP {response.status_code}")
+            
+        blocks = response.json()
+        
+        # Find existing briefing block
+        briefing_block_id = None
+        for block in blocks.get('results', []):
+            if (block['type'] == 'callout' and 
+                block.get('callout', {}).get('rich_text') and
+                len(block['callout']['rich_text']) > 0 and
+                'AI-Generated Morning Insights' in block['callout']['rich_text'][0].get('plain_text', '')):
+                briefing_block_id = block['id']
+                break
+        
+        current_datetime = self.get_current_ist_time()
+        
+        # Create header and content separately to manage size
+        header_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n"
+        
+        # Combine header and briefing content
+        full_content = header_content + briefing_content
+        
+        # Ensure total content is within Notion's limits
+        full_content = self.sanitize_content_for_notion(full_content)
+        
+        print(f"   📊 Final content size: {len(full_content)} characters")
+        
+        new_block_data = {
+            "callout": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": full_content
+                        }
+                    }
+                ],
+                "icon": {
+                    "emoji": "🤖"
+                },
+                "color": "blue_background"
+            }
+        }
+        
+        try:
+            if briefing_block_id:
+                # Update existing block
+                update_url = f"https://api.notion.com/v1/blocks/{briefing_block_id}"
+                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
+                    
+                return "updated"
+            else:
+                # Create new block
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block_data]}
+                response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
+                    
+                return "created"
+                
+        except Exception as e:
+            print(f"   💡 Detailed error: {str(e)}")
+            print(f"   📊 Content length: {len(full_content)} characters")
+            raise e
+
+    def update_daily_briefing_section(self, briefing_content):
+        """Update briefing with enhanced retry and error handling"""
+        try:
+            print("📝 Updating Notion page with complete briefing...")
+            action = self.notion_retry(self._update_notion_block_safe, briefing_content)
+            print(f"   ✅ Successfully {action} complete daily briefing!")
+        except Exception as e:
+            print(f"❌ Failed to update Notion after all attempts: {str(e)}")
+
+    def run(self):
+        """Main execution"""
+        print(f"🎯 Strategic Daily Briefing Generator (Complete Content)")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
+        print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
+        print(f"📖 Content management: Prevents truncation with size optimization\n")
+        
+        print("📅 Getting calendar events...")
+        calendar_events = self.get_calendar_events_today()
+        print(f"   Found {len(calendar_events)} events")
+        
+        print("📋 Getting weekly checklist...")
+        checklist_items = self.get_weekly_checklist_items()
+        print(f"   Found {len(checklist_items)} items")
+        
+        print("🎯 Getting strategic goals...")
+        strategic_goals = self.get_strategic_goals()
+        print(f"   Found {len(strategic_goals)} goals")
+        
+        print("📝 Reading your journal page content...")
+        journal_entries = self.get_recent_journal_entries_with_page_content()
+        print(f"   ✅ Analyzed {len(journal_entries)} journal entries")
+        
+        print("\n🧠 Generating concise personal insights...")
+        briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
+        print(f"   📊 Generated briefing: {len(briefing)} characters")
+        
+        self.update_daily_briefing_section(briefing)
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
+
+if __name__ == "__main__":
+    briefing = StrategicDailyBriefing()
+    briefing.run()
