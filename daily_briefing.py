@@ -12,43 +12,56 @@ class StrategicDailyBriefing:
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
         
+        # Strategic databases
         self.weekly_checklist_db_id = os.getenv('WEEKLY_CHECKLIST_DB_ID')
         self.strategic_goals_db_id = os.getenv('STRATEGIC_GOALS_DB_ID')
         self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
         
+        # Sleep schedule
         self.sleep_start = "22:00"
         self.sleep_end = "06:30"
+        
+        # Retry settings
         self.max_retries = 3
         self.retry_delay = 3
         
+        # Google Calendar setup
         try:
             credentials_json = json.loads(os.getenv('GOOGLE_CREDENTIALS'))
             self.google_credentials = credentials_json
             self.calendar_id = os.getenv('GOOGLE_CALENDAR_ID')
         except Exception as e:
+            print(f"Google setup error: {e}")
             self.google_credentials = None
 
     def get_current_ist_time(self):
-        """Get IST time"""
+        """Get current IST time correctly"""
         ist = timezone(timedelta(hours=5, minutes=30))
-        return datetime.now(ist).strftime("%A, %B %d, %Y - %I:%M %p IST")
+        now_ist = datetime.now(ist)
+        return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
 
     def notion_retry(self, func, *args, **kwargs):
-        """Retry wrapper"""
+        """Retry wrapper for Notion API calls with exponential backoff"""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
                     print(f"   Attempt {attempt}/{self.max_retries}...")
                 result = func(*args, **kwargs)
+                if attempt > 1:
+                    print(f"   ✅ Succeeded on attempt {attempt}")
                 return result
             except Exception as e:
                 if attempt < self.max_retries:
-                    time.sleep(self.retry_delay * attempt)
+                    wait_time = self.retry_delay * attempt
+                    print(f"   ⚠️ Attempt {attempt} failed: {str(e)[:100]}")
+                    print(f"   ⏳ Waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
                 else:
+                    print(f"   ❌ All {self.max_retries} attempts failed")
                     raise e
 
     def get_google_access_token(self):
-        """Get Google token"""
+        """Get access token for Google Calendar API"""
         try:
             now = int(time.time())
             payload = {
@@ -58,228 +71,546 @@ class StrategicDailyBriefing:
                 'exp': now + 3600,
                 'iat': now
             }
-            token = jwt.encode(payload, self.google_credentials['private_key'], algorithm='RS256')
-            data = {'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer', 'assertion': token}
-            return requests.post('https://oauth2.googleapis.com/token', data=data).json().get('access_token')
-        except:
+            
+            private_key = self.google_credentials['private_key']
+            token = jwt.encode(payload, private_key, algorithm='RS256')
+            
+            data = {
+                'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                'assertion': token
+            }
+            
+            response = requests.post('https://oauth2.googleapis.com/token', data=data)
+            return response.json().get('access_token')
+            
+        except Exception as e:
+            print(f"Token generation error: {e}")
             return None
 
     def get_calendar_events_today(self):
-        """Get calendar events"""
+        """Get today's calendar events"""
         try:
-            token = self.get_google_access_token()
-            if not token:
-                return ["Calendar unavailable"]
+            access_token = self.get_google_access_token()
+            if not access_token:
+                return ["Calendar access unavailable"]
+                
+            headers = {'Authorization': f'Bearer {access_token}'}
             
             ist = timezone(timedelta(hours=5, minutes=30))
             now = datetime.now(ist)
-            start = now.replace(hour=0, minute=0, second=0).isoformat()
-            end = now.replace(hour=23, minute=59, second=59).isoformat()
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
             
-            response = requests.get(
-                f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
-                headers={'Authorization': f'Bearer {token}'},
-                params={'timeMin': start, 'timeMax': end, 'singleEvents': True, 'orderBy': 'startTime'}
-            )
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events"
+            params = {
+                'timeMin': start_time,
+                'timeMax': end_time,
+                'singleEvents': True,
+                'orderBy': 'startTime'
+            }
             
-            events = []
-            for event in response.json().get('items', []):
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code != 200:
+                print(f"Calendar API error: {response.status_code}")
+                return ["Calendar access error"]
+                
+            events_data = response.json()
+            events = events_data.get('items', [])
+            
+            formatted_events = []
+            for event in events:
+                start = event.get('start', {})
                 summary = event.get('summary', 'No title')
-                start_time = event.get('start', {}).get('dateTime', event.get('start', {}).get('date', ''))
-                time_str = start_time.split('T')[1][:5] if 'T' in start_time else 'All day'
-                events.append(f"{time_str}: {summary}")
-            
-            return events if events else ["No events"]
-        except:
-            return ["Calendar unavailable"]
-
-    def get_weekly_checklist_items(self):
-        """Get checklist"""
-        try:
-            print("📋 Getting checklist...")
-            response = requests.post(
-                f"https://api.notion.com/v1/databases/{self.weekly_checklist_db_id}/query",
-                headers={"Authorization": f"Bearer {self.notion_token}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"},
-                json={"filter": {"property": "Done?", "checkbox": {"equals": False}}, "page_size": 10},
-                timeout=10
-            )
-            
-            items = []
-            for item in response.json().get('results', []):
-                if 'Task' in item['properties'] and item['properties']['Task']['title']:
-                    items.append(item['properties']['Task']['title'][0]['plain_text'])
-            
-            print(f"   Found {len(items)} items")
-            return items if items else ["All completed"]
-        except:
-            return ["Weekly review"]
-
-    def get_strategic_goals(self):
-        """Get goals"""
-        try:
-            print("🎯 Getting goals...")
-            response = requests.post(
-                f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query",
-                headers={"Authorization": f"Bearer {self.notion_token}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"},
-                json={"filter": {"property": "Status", "status": {"equals": "In progress"}}, "page_size": 5},
-                timeout=10
-            )
-            
-            goals = []
-            for goal in response.json().get('results', []):
-                name = 'Untitled'
-                progress = 0
-                if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
-                    name = goal['properties']['Name']['title'][0]['plain_text']
-                if 'Progress' in goal['properties'] and goal['properties']['Progress']['number']:
-                    progress = int(goal['properties']['Progress']['number'])
-                goals.append(f"{name} ({progress}%)")
-            
-            print(f"   Found {len(goals)} goals")
-            return goals if goals else ["Define goals"]
-        except:
-            return ["Strategic planning"]
-
-    def get_recent_journal_entries(self):
-        """Get journal entries"""
-        try:
-            print("📝 Getting journals...")
-            response = requests.post(
-                f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query",
-                headers={"Authorization": f"Bearer {self.notion_token}", "Content-Type": "application/json", "Notion-Version": "2022-06-28"},
-                json={"sorts": [{"property": "Created time", "direction": "descending"}], "page_size": 2},
-                timeout=10
-            )
-            
-            entries = []
-            for entry in response.json().get('results', []):
-                title = 'Journal'
-                if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
-                    title = entry['properties']['Name']['title'][0]['plain_text']
                 
-                # Get page content
-                blocks_response = requests.get(
-                    f"https://api.notion.com/v1/blocks/{entry['id']}/children",
-                    headers={"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"},
-                    timeout=15
-                )
+                start_time = start.get('dateTime', start.get('date', ''))
+                if 'T' in start_time:
+                    time_str = start_time.split('T')[1][:5]
+                else:
+                    time_str = 'All day'
                 
-                content_parts = []
-                for block in blocks_response.json().get('results', []):
-                    if block['type'] == 'paragraph' and block['paragraph']['rich_text']:
-                        text = ''.join([t.get('plain_text', '') for t in block['paragraph']['rich_text']])
-                        if text.strip():
-                            content_parts.append(text)
-                
-                content = '\n'.join(content_parts)[:300] if content_parts else "No content"
-                
-                date = 'Recent'
-                if 'Created time' in entry['properties']:
-                    date = entry['properties']['Created time']['created_time'][:10]
-                
-                entries.append({'title': title, 'content': content, 'date': date})
+                formatted_events.append(f"{time_str}: {summary}")
             
-            print(f"   Found {len(entries)} entries")
-            return entries if entries else [{'title': 'Start journaling', 'content': 'Begin reflections', 'date': 'Today'}]
-        except:
-            return [{'title': 'Daily reflection', 'content': 'Continue journaling', 'date': 'Today'}]
-
-    def generate_strategic_briefing(self, checklist, goals, journals, calendar):
-        """Generate briefing with GPT-5.1 Responses API"""
-        journal_summaries = [f"Entry {i}: '{e['title']}' ({e['date']}) Content: {e['content'][:250]}" 
-                            for i, e in enumerate(journals[:2], 1)]
-        journal_text = ' | '.join(journal_summaries)
-        
-        prompt = f"Create exactly 5 concise numbered insights (2-3 sentences each). No intro. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist[:2])}. GOALS: {'; '.join(goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar[:3])}. Format: 1.[weekly task 7AM-9PM] 2.[goal progress daytime] 3.[Journal analysis using 'you' language - never 'author'. Analyze emotions/patterns. 2-3 sentences max] 4.[calendar prep 6:30AM-9:30PM] 5.[evening reward 7PM-9:30PM]. Each point under 60 words."
-        
-        try:
-            # Use Responses API for GPT-5.1
-            response = self.openai_client.responses.create(
-                model="gpt-5.1",
-                input=f"You are a personal coach. CRITICAL: Use 'you/your' - NEVER 'author/writer'. For point 3: analyze journal content for themes/emotions. Keep all insights CONCISE (2-3 sentences max). No activities 10PM-6:30AM. Start with '1.'\n\n{prompt}",
-                reasoning={"effort": "low"},  # Balanced reasoning for insights
-                text={"verbosity": "medium"},  # Moderate detail
-                max_output_tokens=350
-            )
-            
-            insights = response.output_text.strip()
-            
-            # Clean author references
-            insights = insights.replace("the author", "you").replace("Author", "You").replace("author", "you")
-            insights = insights.replace("writer", "you").replace("the writer", "you").replace("Writer", "You")
-            
-            return insights
+            return formatted_events if formatted_events else ["No events scheduled today"]
             
         except Exception as e:
-            print(f"GPT-5.1 error: {e}")
-            return "1. Complete priority weekly task during morning hours (8:00-11:00 AM) - consistency builds momentum.\n2. Advance strategic initiatives during afternoon sessions (2:00-5:00 PM) - progress compounds.\n3. Your recent journal entries show thoughtful self-reflection - continue this practice for growth.\n4. Approach today's activities with intentional preparation.\n5. Schedule relaxation between 8:00-9:30 PM before sleep."
+            print(f"Calendar error: {e}")
+            return ["Calendar temporarily unavailable"]
 
-    def _update_notion_block(self, briefing):
-        """Update Notion"""
-        import re
-        briefing = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', briefing)
-        briefing = briefing.encode('utf-8', errors='ignore').decode('utf-8')
-        
-        if len(briefing) > 1950:
-            briefing = briefing[:1950] + "..."
-        
+    def _query_weekly_checklist(self):
+        """Get unchecked weekly checklist items"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
         
-        response = requests.get(f"https://api.notion.com/v1/blocks/{self.page_id}/children", 
-                               headers=headers, timeout=10)
+        query_url = f"https://api.notion.com/v1/databases/{self.weekly_checklist_db_id}/query"
+        query_data = {
+            "filter": {
+                "property": "Done?",
+                "checkbox": {
+                    "equals": False
+                }
+            },
+            "page_size": 10
+        }
         
-        block_id = None
-        for block in response.json().get('results', []):
-            if (block['type'] == 'callout' and block.get('callout', {}).get('rich_text') and
+        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+            
+        data = response.json()
+        results = data.get('results', [])
+        
+        items = []
+        for item in results:
+            try:
+                name = 'Untitled task'
+                if 'Task' in item['properties'] and item['properties']['Task']['title']:
+                    name = item['properties']['Task']['title'][0]['plain_text']
+                items.append(name)
+            except Exception as e:
+                print(f"   ⚠️ Error parsing task: {e}")
+                items.append("Weekly task")
+        
+        return items if items else ["All weekly items completed"]
+
+    def get_weekly_checklist_items(self):
+        """Get unchecked weekly checklist with retry"""
+        try:
+            print("📋 Getting Weekly Checklist items...")
+            items = self.notion_retry(self._query_weekly_checklist)
+            print(f"   Found {len(items)} unchecked items")
+            return items
+        except Exception as e:
+            print(f"❌ Weekly checklist failed: {e}")
+            return ["Weekly planning review"]
+
+    def _query_strategic_goals(self):
+        """Get active strategic goals"""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        query_url = f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query"
+        query_data = {
+            "filter": {"property": "Status", "status": {"equals": "In progress"}},
+            "page_size": 5
+        }
+        
+        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+            
+        data = response.json()
+        results = data.get('results', [])
+        
+        goals = []
+        for goal in results:
+            try:
+                name = 'Untitled Goal'
+                if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
+                    name = goal['properties']['Name']['title'][0]['plain_text']
+                
+                progress = 0
+                if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
+                    progress = int(goal['properties']['Progress']['number'])
+                
+                goals.append(f"{name} ({progress}% complete)")
+            except Exception as e:
+                print(f"   ⚠️ Error parsing goal: {e}")
+                goals.append("Strategic goal")
+        
+        return goals if goals else ["Define new strategic goals"]
+
+    def get_strategic_goals(self):
+        """Get strategic goals with retry"""
+        try:
+            print("🎯 Getting Strategic Goals...")
+            goals = self.notion_retry(self._query_strategic_goals)
+            print(f"   Found {len(goals)} active goals")
+            return goals
+        except Exception as e:
+            print(f"❌ Strategic goals failed: {e}")
+            return ["Strategic milestone planning"]
+
+    def _get_page_content(self, page_id):
+        """Get the full content of a Notion page"""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        blocks_url = f"https://api.notion.com/v1/blocks/{page_id}/children"
+        response = requests.get(blocks_url, headers=headers, timeout=15)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get page content: HTTP {response.status_code}")
+            
+        blocks_data = response.json()
+        blocks = blocks_data.get('results', [])
+        
+        content_parts = []
+        
+        def extract_text_from_rich_text(rich_text_array):
+            """Extract plain text from rich text array"""
+            if not rich_text_array:
+                return ""
+            text_parts = []
+            for text_obj in rich_text_array:
+                if text_obj.get('plain_text'):
+                    text_parts.append(text_obj['plain_text'])
+            return ''.join(text_parts)
+        
+        for block in blocks:
+            try:
+                block_type = block.get('type', '')
+                
+                if block_type == 'paragraph':
+                    text = extract_text_from_rich_text(block['paragraph']['rich_text'])
+                    if text.strip():
+                        content_parts.append(text)
+                
+                elif block_type == 'heading_1':
+                    text = extract_text_from_rich_text(block['heading_1']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"# {text}")
+                
+                elif block_type == 'heading_2':
+                    text = extract_text_from_rich_text(block['heading_2']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"## {text}")
+                
+                elif block_type == 'heading_3':
+                    text = extract_text_from_rich_text(block['heading_3']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"### {text}")
+                
+                elif block_type == 'bulleted_list_item':
+                    text = extract_text_from_rich_text(block['bulleted_list_item']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"• {text}")
+                
+                elif block_type == 'numbered_list_item':
+                    text = extract_text_from_rich_text(block['numbered_list_item']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"• {text}")
+                
+                elif block_type == 'to_do':
+                    text = extract_text_from_rich_text(block['to_do']['rich_text'])
+                    checked = block['to_do']['checked']
+                    if text.strip():
+                        status = "✅" if checked else "☐"
+                        content_parts.append(f"{status} {text}")
+                
+                elif block_type == 'quote':
+                    text = extract_text_from_rich_text(block['quote']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"> {text}")
+                
+                elif block_type == 'callout':
+                    text = extract_text_from_rich_text(block['callout']['rich_text'])
+                    if text.strip():
+                        content_parts.append(f"💡 {text}")
+                        
+            except Exception as e:
+                print(f"   ⚠️ Error parsing block {block_type}: {e}")
+        
+        full_content = '\n'.join(content_parts)
+        return full_content[:800] if full_content else "No content found"  # Reduced for better management
+
+    def _query_recent_journal_entries_with_page_content(self):
+        """Get recent journal entries WITH full page content"""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        query_url = f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query"
+        query_data = {
+            "sorts": [{"property": "Created time", "direction": "descending"}],
+            "page_size": 2
+        }
+        
+        response = requests.post(query_url, headers=headers, json=query_data, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"HTTP {response.status_code}: {response.text[:200]}")
+            
+        data = response.json()
+        results = data.get('results', [])
+        
+        journal_entries = []
+        
+        for entry in results:
+            try:
+                # Get journal title
+                title = 'Journal Entry'
+                if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
+                    title = entry['properties']['Name']['title'][0]['plain_text']
+                
+                # Get life areas
+                life_areas = []
+                if 'Life Area' in entry['properties'] and entry['properties']['Life Area']['multi_select']:
+                    life_areas = [area['name'] for area in entry['properties']['Life Area']['multi_select']]
+                
+                # Get created date
+                created_date = 'Unknown date'
+                if 'Created time' in entry['properties'] and entry['properties']['Created time']['created_time']:
+                    created_date = entry['properties']['Created time']['created_time'][:10]
+                
+                # Get page ID to fetch content
+                page_id = entry['id']
+                
+                print(f"   📖 Reading: {title} ({created_date})")
+                
+                # Fetch the actual page content
+                page_content = self._get_page_content(page_id)
+                
+                journal_entries.append({
+                    'title': title,
+                    'content': page_content,
+                    'life_areas': life_areas,
+                    'date': created_date,
+                    'page_id': page_id
+                })
+                
+                print(f"      ✅ Content loaded: {len(page_content)} characters")
+                
+            except Exception as e:
+                print(f"   ⚠️ Error processing journal entry: {e}")
+                journal_entries.append({
+                    'title': 'Recent journal entry',
+                    'content': 'Journal content temporarily unavailable',
+                    'life_areas': [],
+                    'date': 'Recent',
+                    'page_id': ''
+                })
+        
+        return journal_entries if journal_entries else [{
+            'title': 'Start journaling',
+            'content': 'Begin writing daily reflections to track your thoughts and growth',
+            'life_areas': ['Personal Growth'],
+            'date': 'Today',
+            'page_id': ''
+        }]
+
+    def get_recent_journal_entries_with_page_content(self):
+        """Get recent journal entries with full page content and retry logic"""
+        try:
+            print("📝 Getting detailed journal entries with page content...")
+            entries = self.notion_retry(self._query_recent_journal_entries_with_page_content)
+            print(f"   ✅ Successfully loaded {len(entries)} journal entries with content")
+            return entries
+        except Exception as e:
+            print(f"❌ Journal content reading failed: {e}")
+            return [{
+                'title': 'Daily reflection practice',
+                'content': 'Continue building consistent journaling habits for self-awareness and growth',
+                'life_areas': ['Personal Growth'],
+                'date': 'Today',
+                'page_id': ''
+            }]
+
+    def sanitize_content_for_notion(self, content):
+        """Sanitize content to prevent Notion API errors and truncation"""
+        if not content:
+            return "Daily briefing content unavailable"
+        
+        import re
+        
+        # Remove control characters and non-printable characters
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        
+        # Replace problematic unicode characters
+        content = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # INCREASED LIMITS to prevent truncation
+        max_content_length = 1950  # Notion allows up to 2000 characters per text block
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+            print(f"   ⚠️ Content truncated from {len(content)} to {max_content_length} characters")
+        
+        # Ensure content is not empty
+        if not content.strip():
+            content = "Daily briefing generated successfully"
+        
+        return content
+
+    def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
+        """Generate concise but complete strategic daily briefing"""
+        current_datetime = self.get_current_ist_time()
+        
+        # Prepare condensed journal content for analysis
+        journal_summaries = []
+        for i, entry in enumerate(journal_entries[:2], 1):
+            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
+            content_summary = entry['content'][:300] if entry['content'] else 'No content'  # Reduced to save space
+            journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
+        
+        journal_text = ' | '.join(journal_summaries)
+        
+        prompt = f"Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight with timing 7AM-9PM - be concise] 2.[strategic goal insight daytime - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar insight 6:30AM-9:30PM - be concise] 5.[evening reward 7PM-9:30PM - be concise]. Keep each point under 60 words to prevent truncation."
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a personal coach analyzing someone's journal. CRITICAL: Use 'you/your' - NEVER 'author/writer'. For point 3: analyze actual journal content for themes/emotions using personal language. Keep all insights CONCISE (2-3 sentences max per point). No activities 10PM-6:30AM. Start with '1.' directly."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_completion_tokens=350,  # Reduced to ensure conciseness
+                temperature=0.65
+            )
+            
+            insights = response.choices[0].message.content.strip()
+            
+            # Clean up author references
+            insights = insights.replace("the author", "you")
+            insights = insights.replace("Author", "You")
+            insights = insights.replace("author", "you")
+            insights = insights.replace("writer", "you")
+            insights = insights.replace("the writer", "you")
+            insights = insights.replace("Writer", "You")
+            
+            return insights
+            
+        except Exception as e:
+            print(f"OpenAI error: {e}")
+            fallback = "1. Complete your priority weekly task during morning focus hours (8:00-11:00 AM) - consistent action builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - progress compounds daily.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Approach today's scheduled activities with intentional preparation during your peak productive hours.\n5. Schedule relaxation time between 8:00-9:30 PM before sleep - balance supports sustainable performance."
+            return fallback
+
+    def _update_notion_block_safe(self, briefing_content):
+        """Update Notion page with enhanced error handling and size management"""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        # Get current blocks
+        blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+        response = requests.get(blocks_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get blocks: HTTP {response.status_code}")
+            
+        blocks = response.json()
+        
+        # Find existing briefing block
+        briefing_block_id = None
+        for block in blocks.get('results', []):
+            if (block['type'] == 'callout' and 
+                block.get('callout', {}).get('rich_text') and
+                len(block['callout']['rich_text']) > 0 and
                 'AI-Generated Morning Insights' in block['callout']['rich_text'][0].get('plain_text', '')):
-                block_id = block['id']
+                briefing_block_id = block['id']
                 break
         
-        full_content = f"🤖 AI-Generated Morning Insights - {self.get_current_ist_time()}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n{briefing}"
+        current_datetime = self.get_current_ist_time()
         
-        new_block = {
+        # Create header and content separately to manage size
+        header_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n"
+        
+        # Combine header and briefing content
+        full_content = header_content + briefing_content
+        
+        # Ensure total content is within Notion's limits
+        full_content = self.sanitize_content_for_notion(full_content)
+        
+        print(f"   📊 Final content size: {len(full_content)} characters")
+        
+        new_block_data = {
             "callout": {
-                "rich_text": [{"type": "text", "text": {"content": full_content}}],
-                "icon": {"emoji": "🤖"},
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": full_content
+                        }
+                    }
+                ],
+                "icon": {
+                    "emoji": "🤖"
+                },
                 "color": "blue_background"
             }
         }
         
-        if block_id:
-            response = requests.patch(f"https://api.notion.com/v1/blocks/{block_id}", 
-                                     headers=headers, json=new_block, timeout=15)
-            return "updated" if response.status_code == 200 else None
-        else:
-            response = requests.patch(f"https://api.notion.com/v1/blocks/{self.page_id}/children",
-                                     headers=headers, json={"children": [new_block]}, timeout=15)
-            return "created" if response.status_code == 200 else None
+        try:
+            if briefing_block_id:
+                # Update existing block
+                update_url = f"https://api.notion.com/v1/blocks/{briefing_block_id}"
+                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
+                    
+                return "updated"
+            else:
+                # Create new block
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block_data]}
+                response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
+                    
+                return "created"
+                
+        except Exception as e:
+            print(f"   💡 Detailed error: {str(e)}")
+            print(f"   📊 Content length: {len(full_content)} characters")
+            raise e
+
+    def update_daily_briefing_section(self, briefing_content):
+        """Update briefing with enhanced retry and error handling"""
+        try:
+            print("📝 Updating Notion page with complete briefing...")
+            action = self.notion_retry(self._update_notion_block_safe, briefing_content)
+            print(f"   ✅ Successfully {action} complete daily briefing!")
+        except Exception as e:
+            print(f"❌ Failed to update Notion after all attempts: {str(e)}")
 
     def run(self):
         """Main execution"""
-        print(f"🎯 GPT-5.1 Powered Strategic Briefing (Responses API)")
-        print(f"🕐 Started: {self.get_current_ist_time()}")
-        print(f"🤖 AI Model: GPT-5.1 (Latest OpenAI Model)")
-        print(f"⚡ Reasoning: low (balanced mode)")
-        print(f"📊 Verbosity: medium (moderate detail)")
-        print(f"😴 Sleep: {self.sleep_start} - {self.sleep_end}\n")
+        print(f"🎯 Strategic Daily Briefing Generator (Complete Content)")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
+        print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
+        print(f"📖 Content management: Prevents truncation with size optimization\n")
         
-        calendar = self.get_calendar_events_today()
-        checklist = self.get_weekly_checklist_items()
-        goals = self.get_strategic_goals()
-        journals = self.get_recent_journal_entries()
+        print("📅 Getting calendar events...")
+        calendar_events = self.get_calendar_events_today()
+        print(f"   Found {len(calendar_events)} events")
         
-        print("\n🧠 Generating GPT-5.1 insights...")
-        briefing = self.generate_strategic_briefing(checklist, goals, journals, calendar)
+        print("📋 Getting weekly checklist...")
+        checklist_items = self.get_weekly_checklist_items()
+        print(f"   Found {len(checklist_items)} items")
         
-        print("📝 Updating Notion...")
-        action = self.notion_retry(self._update_notion_block, briefing)
-        print(f"   ✅ Successfully {action} briefing!")
+        print("🎯 Getting strategic goals...")
+        strategic_goals = self.get_strategic_goals()
+        print(f"   Found {len(strategic_goals)} goals")
         
-        print(f"\n✅ Completed: {self.get_current_ist_time()}")
+        print("📝 Reading your journal page content...")
+        journal_entries = self.get_recent_journal_entries_with_page_content()
+        print(f"   ✅ Analyzed {len(journal_entries)} journal entries")
+        
+        print("\n🧠 Generating concise personal insights...")
+        briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
+        print(f"   📊 Generated briefing: {len(briefing)} characters")
+        
+        self.update_daily_briefing_section(briefing)
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
