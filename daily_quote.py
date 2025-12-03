@@ -241,7 +241,7 @@ class ContentRemixGenerator:
         return selected
 
     def generate_content_remix_synthesis(self, two_media):
-        """Generate synthesis using GPT-5"""
+        """Generate synthesis using GPT-5 mini - 80% CHEAPER!"""
         
         if not two_media:
             return self.get_fallback_synthesis()
@@ -276,10 +276,11 @@ Generate ONE insightful synthesis (max 120 words) that:
 Write continuous prose followed by the question."""
 
         try:
-            print("   🤖 Calling GPT-5...")
+            print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
             
+            # CHANGED: Using gpt-5-mini instead of gpt-5
             response = self.openai_client.responses.create(
-                model="gpt-5",
+                model="gpt-5-mini",  # ⭐ CHANGED FROM gpt-5
                 input=synthesis_prompt,
                 reasoning={"effort": "medium"},
                 text={"verbosity": "medium"}
@@ -293,11 +294,11 @@ Write continuous prose followed by the question."""
                 if media_name in synthesis:
                     synthesis = synthesis.replace(media_name, f"**{media_name}**", 1)
             
-            print("   ✅ Synthesis generated")
+            print("   ✅ Synthesis generated with GPT-5 mini")
             return synthesis
             
         except Exception as e:
-            print(f"   ❌ GPT-5 error: {e}")
+            print(f"   ❌ GPT-5 mini error: {e}")
             traceback.print_exc()
             return self.get_fallback_synthesis()
 
@@ -414,7 +415,8 @@ What's one lesson from your recent media that you can apply today?"""
         """Main execution"""
         try:
             print(f"\n{'='*60}")
-            print(f"🎨 Content Remix Generator")
+            print(f"🎨 Content Remix Generator (GPT-5 mini)")
+            print(f"💰 Running at 80% cost savings!")
             print(f"🕐 {self.get_current_ist_time()}")
             print(f"{'='*60}\n")
             
@@ -439,7 +441,8 @@ What's one lesson from your recent media that you can apply today?"""
             self.update_notion_page(synthesis, two_media)
             
             print(f"\n{'='*60}")
-            print(f"✅ Completed!")
+            print(f"✅ Completed with GPT-5 mini!")
+            print(f"💰 Saved ~80% on API costs")
             print(f"{'='*60}\n")
             
         except Exception as e:
