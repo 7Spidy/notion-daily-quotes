@@ -241,66 +241,82 @@ class ContentRemixGenerator:
         return selected
 
     def generate_content_remix_synthesis(self, two_media):
-        """Generate synthesis using GPT-5 mini - 80% CHEAPER!"""
+    """Generate synthesis using GPT-5 mini - 80% CHEAPER!"""
+    
+    if not two_media:
+        return self.get_fallback_synthesis()
+    
+    media_descriptions = []
+    for i, media in enumerate(two_media, 1):
+        context_str = f"{media['type']}"
+        if media['context'].get('author'):
+            context_str += f" by {media['context']['author']}"
+        elif media['context'].get('type'):
+            context_str += f" ({media['context']['type']})"
+        elif media['context'].get('system'):
+            context_str += f" on {media['context']['system']}"
         
-        if not two_media:
-            return self.get_fallback_synthesis()
-        
-        media_descriptions = []
-        for i, media in enumerate(two_media, 1):
-            context_str = f"{media['type']}"
-            if media['context'].get('author'):
-                context_str += f" by {media['context']['author']}"
-            elif media['context'].get('type'):
-                context_str += f" ({media['context']['type']})"
-            elif media['context'].get('system'):
-                context_str += f" on {media['context']['system']}"
-            
-            status = media['context'].get('status', 'Unknown')
-            media_descriptions.append(
-                f"[Content {i}] {media['name']} - {context_str} [Status: {status}]"
-            )
-        
-        synthesis_prompt = f"""Based on these 2 pieces of content:
+        status = media['context'].get('status', 'Unknown')
+        media_descriptions.append(
+            f"[Content {i}] {media['name']} - {context_str} [Status: {status}]"
+        )
+    
+    synthesis_prompt = f"""Based on these 2 pieces of content:
 
 {chr(10).join(media_descriptions)}
 
 Generate ONE insightful synthesis (max 120 words) that:
-1. Identifies a common thread or connection between both
-2. Offers a unique insight
-3. Ends with ONE actionable question on a new line
-4. Uses engaging, personal tone
+1. Identifies a common thread or thematic connection between both pieces of content
+2. Offers a unique insight about that connection
+3. Ends with ONE actionable, curiosity-sparking question on a new line that:
+   - Invites personal reflection or experimentation
+   - Relates to YOUR life, habits, or growth
+   - Does NOT ask for more content analysis
+   - Makes you want to try something new or think differently
+   - Uses "you/your" language directly
+4. Uses engaging, personal tone throughout
 5. Start by mentioning BOTH content titles naturally (plain text, no bold)
-6. Do NOT add section labels
+6. Do NOT add section labels or "My take:" prefixes
 
-Write continuous prose followed by the question."""
+Write continuous prose followed by the reflective question.
 
-        try:
-            print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
-            
-            # CHANGED: Using gpt-5-mini instead of gpt-5
-            response = self.openai_client.responses.create(
-                model="gpt-5-mini",  # ⭐ CHANGED FROM gpt-5
-                input=synthesis_prompt,
-                reasoning={"effort": "medium"},
-                text={"verbosity": "medium"}
-            )
-            
-            synthesis = response.output_text.strip()
-            
-            # Make first occurrence of each media name BOLD
-            for media in two_media:
-                media_name = media['name']
-                if media_name in synthesis:
-                    synthesis = synthesis.replace(media_name, f"**{media_name}**", 1)
-            
-            print("   ✅ Synthesis generated with GPT-5 mini")
-            return synthesis
-            
-        except Exception as e:
-            print(f"   ❌ GPT-5 mini error: {e}")
-            traceback.print_exc()
-            return self.get_fallback_synthesis()
+BAD question examples (too analytical, about the content):
+- "Would you like a scene-by-scene comparison?"
+- "Want to explore how each medium does X?"
+- "Should we analyze the differences?"
+
+GOOD question examples (personal, actionable, curiosity-driven):
+- "What's one area of your life where you're still in the 'in-progress' phase, and what would completing it feel like?"
+- "If you were reinventing yourself right now, which part of your identity would you rewrite first?"
+- "What transformation are you avoiding because you're waiting for the 'right moment' instead of starting messy?"
+"""
+
+    try:
+        print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
+        
+        response = self.openai_client.responses.create(
+            model="gpt-5-mini",
+            input=synthesis_prompt,
+            reasoning={"effort": "medium"},
+            text={"verbosity": "medium"}
+        )
+        
+        synthesis = response.output_text.strip()
+        
+        # Make first occurrence of each media name BOLD
+        for media in two_media:
+            media_name = media['name']
+            if media_name in synthesis:
+                synthesis = synthesis.replace(media_name, f"**{media_name}**", 1)
+        
+        print("   ✅ Synthesis generated with GPT-5 mini")
+        return synthesis
+        
+    except Exception as e:
+        print(f"   ❌ GPT-5 mini error: {e}")
+        traceback.print_exc()
+        return self.get_fallback_synthesis()
+
 
     def get_fallback_synthesis(self):
         """Fallback synthesis"""
