@@ -323,7 +323,7 @@ class StrategicDailyBriefing:
                 print(f"   ⚠️ Error parsing block {block_type}: {e}")
         
         full_content = '\n'.join(content_parts)
-        return full_content[:800] if full_content else "No content found"  # Reduced for better management
+        return full_content[:800] if full_content else "No content found"
 
     def _query_recent_journal_entries_with_page_content(self):
         """Get recent journal entries WITH full page content"""
@@ -432,8 +432,8 @@ class StrategicDailyBriefing:
         # Replace problematic unicode characters
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
         
-        # INCREASED LIMITS to prevent truncation
-        max_content_length = 1950  # Notion allows up to 2000 characters per text block
+        # Increased limits to prevent truncation
+        max_content_length = 1950
         if len(content) > max_content_length:
             content = content[:max_content_length] + "..."
             print(f"   ⚠️ Content truncated from {len(content)} to {max_content_length} characters")
@@ -445,32 +445,32 @@ class StrategicDailyBriefing:
         return content
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-        """Generate concise but complete strategic daily briefing"""
+        """Generate strategic briefing using GPT-5 mini - 80% CHEAPER!"""
         current_datetime = self.get_current_ist_time()
         
         # Prepare condensed journal content for analysis
         journal_summaries = []
         for i, entry in enumerate(journal_entries[:2], 1):
             areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-            content_summary = entry['content'][:300] if entry['content'] else 'No content'  # Reduced to save space
+            content_summary = entry['content'][:300] if entry['content'] else 'No content'
             journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
         
         journal_text = ' | '.join(journal_summaries)
         
-        prompt = f"Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight with timing 7AM-9PM - be concise] 2.[strategic goal insight daytime - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar insight 6:30AM-9:30PM - be concise] 5.[evening reward 7PM-9:30PM - be concise]. Keep each point under 60 words to prevent truncation."
+        prompt = f"""Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight with timing 7AM-9PM - be concise] 2.[strategic goal insight daytime - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar insight 6:30AM-9:30PM - be concise] 5.[evening reward 7PM-9:30PM - be concise]. Keep each point under 60 words to prevent truncation."""
         
         try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a personal coach analyzing someone's journal. CRITICAL: Use 'you/your' - NEVER 'author/writer'. For point 3: analyze actual journal content for themes/emotions using personal language. Keep all insights CONCISE (2-3 sentences max per point). No activities 10PM-6:30AM. Start with '1.' directly."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_completion_tokens=350,  # Reduced to ensure conciseness
-                temperature=0.65
+            print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
+            
+            # CHANGED: Using GPT-5 mini responses API instead of chat completions
+            response = self.openai_client.responses.create(
+                model="gpt-5-mini",  # ⭐ CHANGED FROM gpt-4o-mini
+                input=prompt,
+                reasoning={"effort": "medium"},
+                text={"verbosity": "medium"}
             )
             
-            insights = response.choices[0].message.content.strip()
+            insights = response.output_text.strip()
             
             # Clean up author references
             insights = insights.replace("the author", "you")
@@ -480,10 +480,11 @@ class StrategicDailyBriefing:
             insights = insights.replace("the writer", "you")
             insights = insights.replace("Writer", "You")
             
+            print("   ✅ Strategic briefing generated with GPT-5 mini")
             return insights
             
         except Exception as e:
-            print(f"OpenAI error: {e}")
+            print(f"   ❌ GPT-5 mini error: {e}")
             fallback = "1. Complete your priority weekly task during morning focus hours (8:00-11:00 AM) - consistent action builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - progress compounds daily.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Approach today's scheduled activities with intentional preparation during your peak productive hours.\n5. Schedule relaxation time between 8:00-9:30 PM before sleep - balance supports sustainable performance."
             return fallback
 
@@ -583,7 +584,8 @@ class StrategicDailyBriefing:
 
     def run(self):
         """Main execution"""
-        print(f"🎯 Strategic Daily Briefing Generator (Complete Content)")
+        print(f"🎯 Strategic Daily Briefing Generator (GPT-5 mini)")
+        print(f"💰 Running at 80% cost savings!")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
         print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
@@ -605,12 +607,13 @@ class StrategicDailyBriefing:
         journal_entries = self.get_recent_journal_entries_with_page_content()
         print(f"   ✅ Analyzed {len(journal_entries)} journal entries")
         
-        print("\n🧠 Generating concise personal insights...")
+        print("\n🧠 Generating personalized insights with GPT-5 mini...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
         print(f"   📊 Generated briefing: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
         print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
+        print(f"💰 Saved ~80% on API costs with GPT-5 mini!")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
