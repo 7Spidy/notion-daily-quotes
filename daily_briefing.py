@@ -87,6 +87,68 @@ class StrategicDailyBriefing:
             print(f"Token generation error: {e}")
             return None
 
+    def get_office_block_times(self):
+        """Extract Office event times from today's calendar"""
+        try:
+            access_token = self.get_google_access_token()
+            if not access_token:
+                print("   ⚠️ Calendar access unavailable - no office block detected")
+                return None, None
+                
+            headers = {'Authorization': f'Bearer {access_token}'}
+            
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+            
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events"
+            params = {
+                'timeMin': start_time,
+                'timeMax': end_time,
+                'singleEvents': True,
+                'orderBy': 'startTime'
+            }
+            
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code != 200:
+                print(f"   ⚠️ Calendar API error: {response.status_code} - no office block detected")
+                return None, None
+                
+            events_data = response.json()
+            events = events_data.get('items', [])
+            
+            # Find "Office" event
+            for event in events:
+                summary = event.get('summary', '').lower()
+                if 'office' in summary:
+                    start = event.get('start', {})
+                    end = event.get('end', {})
+                    
+                    start_time = start.get('dateTime', start.get('date', ''))
+                    end_time = end.get('dateTime', end.get('date', ''))
+                    
+                    if 'T' in start_time:
+                        start_hour = start_time.split('T')[1][:5]
+                    else:
+                        start_hour = '09:00'
+                    
+                    if 'T' in end_time:
+                        end_hour = end_time.split('T')[1][:5]
+                    else:
+                        end_hour = '18:30'
+                    
+                    print(f"   📅 Office block detected: {start_hour} - {end_hour}")
+                    return start_hour, end_hour
+            
+            print("   ℹ️ No 'Office' event found on calendar")
+            return None, None
+            
+        except Exception as e:
+            print(f"   ⚠️ Calendar error: {e}")
+            return None, None
+
     def get_calendar_events_today(self):
         """Get today's calendar events"""
         try:
@@ -444,8 +506,8 @@ class StrategicDailyBriefing:
         
         return content
 
-    def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-        """Generate strategic briefing using GPT-5 mini - 80% CHEAPER!"""
+    def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events, office_start=None, office_end=None):
+        """Generate strategic briefing using GPT-5 mini - 80% CHEAPER! Respects Office calendar block"""
         current_datetime = self.get_current_ist_time()
         
         # Prepare condensed journal content for analysis
@@ -457,10 +519,22 @@ class StrategicDailyBriefing:
         
         journal_text = ' | '.join(journal_summaries)
         
-        prompt = f"""Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. SLEEP: Never suggest 10PM-6:30AM activities. DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[weekly task insight with timing 7AM-9PM - be concise] 2.[strategic goal insight daytime - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar insight 6:30AM-9:30PM - be concise] 5.[evening reward 7PM-9:30PM - be concise]. Keep each point under 60 words to prevent truncation."""
+        # Build schedule constraints
+        if office_start and office_end:
+            schedule_constraint = f"CRITICAL: Office block detected ({office_start} - {office_end}). NEVER suggest activities during these office hours. Only suggest activities outside office hours: 6:30 AM-{office_start} (morning) and {office_end}-10:00 PM (evening)."
+            available_times = f"morning (6:30-{office_start} AM) and evening ({office_end}-10:00 PM)"
+        else:
+            schedule_constraint = "CRITICAL: Never suggest activities between 10:00 PM - 6:30 AM (sleep). Only suggest activities for: 6:30 AM-9:00 AM (morning), 6:30 PM-10:00 PM (evening)."
+            available_times = "morning (6:30-9:00 AM) and evening (6:30-10:00 PM)"
+        
+        prompt = f"""Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. {schedule_constraint} DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[morning preparation insight during available morning time - be concise] 2.[morning focus insight for {available_times} - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar overview for available times - be concise] 5.[evening wind-down insight for available evening time - be concise]. Keep each point under 60 words to prevent truncation. NEVER suggest activities during office hours {f'({office_start}-{office_end})' if office_start else '(if detected)'}."""
         
         try:
             print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
+            if office_start and office_end:
+                print(f"   🔒 Schedule protection: Office block ({office_start}-{office_end}) - NO ACTIVITIES")
+            else:
+                print(f"   ℹ️ No Office block detected - standard schedule (6:30 AM-10 PM)")
             
             # CHANGED: Using GPT-5 mini responses API instead of chat completions
             response = self.openai_client.responses.create(
@@ -485,7 +559,10 @@ class StrategicDailyBriefing:
             
         except Exception as e:
             print(f"   ❌ GPT-5 mini error: {e}")
-            fallback = "1. Complete your priority weekly task during morning focus hours (8:00-11:00 AM) - consistent action builds momentum.\n2. Advance your strategic initiatives during productive afternoon sessions (2:00-5:00 PM) - progress compounds daily.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Approach today's scheduled activities with intentional preparation during your peak productive hours.\n5. Schedule relaxation time between 8:00-9:30 PM before sleep - balance supports sustainable performance."
+            if office_start and office_end:
+                fallback = f"1. Prepare mentally for your workday during early morning hours (6:30-{office_start} AM) - set intentions and review priorities before office time begins.\n2. Your office block is protected ({office_start}-{office_end}) - focus completely on professional tasks during this time.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. After office hours ({office_end} onwards), transition to personal time - decompress with activities that help you unwind.\n5. Evening wind-down ({office_end[0:2]}:00-9:30 PM) - engage in relaxing activities before sleep to prepare for quality rest."
+            else:
+                fallback = "1. Prepare mentally for your day during early morning hours (6:30-9:00 AM) - set intentions and review priorities.\n2. Your calendar is clear during morning and evening - use 6:30 AM-9 AM for focused work and 6:30 PM-10 PM for personal activities.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Review your calendar events and adjust your schedule accordingly - flexibility supports sustainable performance.\n5. Evening wind-down (8:00-9:30 PM) - engage in relaxing activities before sleep to prepare for quality rest."
             return fallback
 
     def _update_notion_block_safe(self, briefing_content):
@@ -591,6 +668,9 @@ class StrategicDailyBriefing:
         print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
         print(f"📖 Content management: Prevents truncation with size optimization\n")
         
+        print("📅 Checking calendar for Office block...")
+        office_start, office_end = self.get_office_block_times()
+        
         print("📅 Getting calendar events...")
         calendar_events = self.get_calendar_events_today()
         print(f"   Found {len(calendar_events)} events")
@@ -608,7 +688,7 @@ class StrategicDailyBriefing:
         print(f"   ✅ Analyzed {len(journal_entries)} journal entries")
         
         print("\n🧠 Generating personalized insights with GPT-5 mini...")
-        briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
+        briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events, office_start, office_end)
         print(f"   📊 Generated briefing: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
