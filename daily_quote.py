@@ -118,7 +118,7 @@ class ContentRemixGenerator:
                     raise e
 
     def _query_media_database(self, db_id, media_type):
-        """Query media database - FILTER: Status = In Progress OR Done"""
+        """Query media database - NO STATUS FILTER (includes all items)"""
         print(f"      → Querying {media_type} database: {db_id}")
         
         headers = {
@@ -129,23 +129,8 @@ class ContentRemixGenerator:
         
         query_url = f"https://api.notion.com/v1/databases/{db_id}/query"
         
+        # NO STATUS FILTERING - fetch all items
         query_data = {
-            "filter": {
-                "or": [
-                    {
-                        "property": "Status",
-                        "status": {
-                            "equals": "In Progress"
-                        }
-                    },
-                    {
-                        "property": "Status",
-                        "status": {
-                            "equals": "Done"
-                        }
-                    }
-                ]
-            },
             "page_size": 100
         }
         
@@ -167,11 +152,8 @@ class ContentRemixGenerator:
                 if 'Name' in item['properties'] and item['properties']['Name']['title']:
                     name = item['properties']['Name']['title'][0]['plain_text']
                 
-                status = 'Unknown'
-                if 'Status' in item['properties'] and item['properties']['Status']['status']:
-                    status = item['properties']['Status']['status']['name']
-                
-                context = {'status': status}
+                # Build context WITHOUT status field
+                context = {}
                 
                 if media_type == 'Movies & TV':
                     if 'Type' in item['properties'] and item['properties']['Type']['select']:
@@ -198,7 +180,7 @@ class ContentRemixGenerator:
         return media_items
 
     def get_filtered_media_consumption(self):
-        """Get media with status 'In Progress' or 'Done' from all 3 databases"""
+        """Get all media items from all 3 databases (no status filtering)"""
         all_media = []
         
         if self.movies_db_id:
@@ -256,9 +238,8 @@ class ContentRemixGenerator:
             elif media['context'].get('system'):
                 context_str += f" on {media['context']['system']}"
             
-            status = media['context'].get('status', 'Unknown')
             media_descriptions.append(
-                f"[Content {i}] {media['name']} - {context_str} [Status: {status}]"
+                f"[Content {i}] {media['name']} - {context_str}"
             )
         
         synthesis_prompt = f"""Based on these 2 pieces of content:
