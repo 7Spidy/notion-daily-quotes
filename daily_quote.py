@@ -118,7 +118,7 @@ class ContentRemixGenerator:
                     raise e
 
     def _query_media_database(self, db_id, media_type):
-        """Query media database - FILTER: Status = In Progress OR Done (but don't use Status in insights)"""
+        """Query media database - FILTER: Status = In Progress OR Done"""
         print(f"      → Querying {media_type} database: {db_id}")
         
         headers = {
@@ -167,8 +167,11 @@ class ContentRemixGenerator:
                 if 'Name' in item['properties'] and item['properties']['Name']['title']:
                     name = item['properties']['Name']['title'][0]['plain_text']
                 
-                # Build context WITHOUT status field
-                context = {}
+                status = 'Unknown'
+                if 'Status' in item['properties'] and item['properties']['Status']['status']:
+                    status = item['properties']['Status']['status']['name']
+                
+                context = {'status': status}
                 
                 if media_type == 'Movies & TV':
                     if 'Type' in item['properties'] and item['properties']['Type']['select']:
@@ -195,7 +198,7 @@ class ContentRemixGenerator:
         return media_items
 
     def get_filtered_media_consumption(self):
-        """Get media with status 'In Progress' or 'Done' from all 3 databases (but don't use Status in insights)"""
+        """Get media with status 'In Progress' or 'Done' from all 3 databases"""
         all_media = []
         
         if self.movies_db_id:
@@ -253,8 +256,9 @@ class ContentRemixGenerator:
             elif media['context'].get('system'):
                 context_str += f" on {media['context']['system']}"
             
+            status = media['context'].get('status', 'Unknown')
             media_descriptions.append(
-                f"[Content {i}] {media['name']} - {context_str}"
+                f"[Content {i}] {media['name']} - {context_str} [Status: {status}]"
             )
         
         synthesis_prompt = f"""Based on these 2 pieces of content:
