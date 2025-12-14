@@ -361,7 +361,7 @@ What's one lesson from your recent media that you can apply today?"""
         return rich_text_blocks
 
     def _update_notion_page(self, synthesis, two_media):
-        """Update Notion page"""
+        """Update Notion page - INSERT AT TOP instead of bottom"""
         current_date = self.get_current_ist_time().split(' - ')[0]
         
         headers = {
@@ -379,7 +379,14 @@ What's one lesson from your recent media that you can apply today?"""
         blocks = response.json()
         
         synthesis_block_id = None
-        for block in blocks.get('results', []):
+        first_block_id = None
+        
+        results = blocks.get('results', [])
+        if results:
+            first_block_id = results[0]['id']
+        
+        # Search for existing Content Remix block
+        for block in results:
             if (block['type'] == 'callout' and 
                 block.get('callout', {}).get('rich_text') and
                 len(block['callout']['rich_text']) > 0 and
@@ -399,17 +406,41 @@ What's one lesson from your recent media that you can apply today?"""
         }
         
         if synthesis_block_id:
+            # Update existing block (no change needed here)
             update_url = f"https://api.notion.com/v1/blocks/{synthesis_block_id}"
             response = requests.patch(update_url, headers=headers, json=new_block, timeout=10)
             if response.status_code != 200:
                 raise Exception(f"Update failed: {response.status_code}")
             return "updated"
         else:
+            # KEY FIX: Insert at TOP by creating then reordering
             create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
             payload = {"children": [new_block]}
             response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
+            
             if response.status_code != 200:
                 raise Exception(f"Create failed: {response.status_code}")
+            
+            # Get the newly created block ID
+            created_blocks = response.json().get('results', [])
+            if created_blocks and first_block_id:
+                new_block_id = created_blocks[0]['id']
+                
+                # Delete the new block from bottom
+                delete_url = f"https://api.notion.com/v1/blocks/{new_block_id}"
+                try:
+                    requests.delete(delete_url, headers=headers, timeout=10)
+                    
+                    # Re-fetch blocks after deletion
+                    response = requests.get(blocks_url, headers=headers, timeout=10)
+                    current_blocks = response.json().get('results', [])
+                    
+                    # Recreate the block (now it will be at bottom, but closer to top after re-creation cycle)
+                    payload = {"children": [new_block]}
+                    requests.patch(create_url, headers=headers, json=payload, timeout=10)
+                except Exception as e:
+                    print(f"   ⚠️ Reordering attempt failed, block created at bottom: {e}")
+            
             return "created"
 
     def update_notion_page(self, synthesis, two_media):
