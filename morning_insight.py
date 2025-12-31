@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class MorningInsightGenerator:
-    """Generates personalized morning insights using GPT-5.1 mini and Google Calendar."""
+    """Generates personalized morning insights using GPT-5 mini and Google Calendar."""
     
     def __init__(self):
         """Initialize the generator with OpenAI and Google Calendar clients."""
@@ -22,7 +22,7 @@ class MorningInsightGenerator:
         
         # Configuration
         self.work_threshold_hours = 2
-        self.model = "gpt-5.1-mini"  # Updated to GPT-5.1 mini
+        self.model = "gpt-5-mini"  # Correct model name
         self.max_tokens = 300
         self.temperature = 0.9
         
@@ -92,7 +92,7 @@ class MorningInsightGenerator:
             return False
     
     def _generate_wisdom(self):
-        """Generate a fresh piece of wisdom using GPT-5.1 mini."""
+        """Generate a fresh piece of wisdom using GPT-5 mini."""
         try:
             response = self.openai_client.chat.completions.create(
                 model=self.model,
@@ -197,7 +197,7 @@ class MorningInsightGenerator:
 {day_insight}
 
 ═══════════════════════════════════════════════
-Generated using GPT-5.1 mini | IST Timezone
+Generated using GPT-5 mini | IST Timezone
 ═══════════════════════════════════════════════
 """
             
