@@ -58,3 +58,47 @@ jobs:
           STRATEGIC_GOALS_DB_ID: ${{ secrets.STRATEGIC_GOALS_DB_ID }}
           DAILY_JOURNAL_DB_ID: ${{ secrets.DAILY_JOURNAL_DB_ID }}
         run: python daily_briefing.py
+
+  morning-insight:
+    name: Generate AI Morning Insights
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install openai google-auth google-api-python-client python-dotenv
+
+      - name: Create Google Credentials
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          echo "$GOOGLE_CREDENTIALS" > credentials.json
+
+      - name: Generate Morning Insight
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          python morning_insight.py
+
+      - name: Commit and push logs
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add logs/ || true
+          git commit -m "📝 Add morning insight logs - $(date +'%Y-%m-%d %H:%M:%S IST')" || echo "No changes to commit"
+          git push || true
+
+      - name: Upload logs as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: morning-insight-logs
+          path: logs/
+          retention-days: 30
