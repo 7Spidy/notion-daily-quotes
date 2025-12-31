@@ -21,10 +21,10 @@ class MorningInsightGenerator:
         self.ist_tz = ZoneInfo("Asia/Kolkata")
         
         # Configuration
-        self.work_threshold_hours = 2
-        self.model = "gpt-5-mini"  # Correct model name
-        self.max_completion_tokens = 300  # GPT-5 mini uses max_completion_tokens
-        self.temperature = 0.9
+      self.work_threshold_hours = 2
+    self.model = "gpt-5-mini"        # Correct
+    self.max_output_tokens = 300     # Changed from max_completion_tokens for GPT-5 compliance
+    self.temperature = 1             # Safer default for reasoning-capable models (or remove entirely)
         
     def _setup_google_calendar(self):
         """Setup Google Calendar API with service account credentials."""
