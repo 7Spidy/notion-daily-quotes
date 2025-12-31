@@ -23,7 +23,7 @@ class MorningInsightGenerator:
         # Configuration
         self.work_threshold_hours = 2
         self.model = "gpt-5-mini"  # Correct model name
-        self.max_tokens = 300
+        self.max_completion_tokens = 300  # GPT-5 mini uses max_completion_tokens
         self.temperature = 0.9
         
     def _setup_google_calendar(self):
@@ -106,7 +106,7 @@ class MorningInsightGenerator:
                         "content": "Generate a fresh and unique piece of morning wisdom for today. Make it inspiring and practical."
                     }
                 ],
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature
             )
             
@@ -130,7 +130,7 @@ class MorningInsightGenerator:
                         "content": "Today has back-to-back work commitments. Give me one key insight to stay productive and balanced."
                     }
                 ],
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature
             )
             
@@ -154,7 +154,7 @@ class MorningInsightGenerator:
                         "content": "Today is light on work commitments. Give me one insight on how to best enjoy this day."
                     }
                 ],
-                max_tokens=self.max_tokens,
+                max_completion_tokens=self.max_completion_tokens,
                 temperature=self.temperature
             )
             
