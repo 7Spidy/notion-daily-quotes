@@ -29,9 +29,11 @@ class MorningInsightGenerator:
         try:
             credentials_json = json.loads(os.getenv('GOOGLE_CREDENTIALS'))
             self.google_credentials = credentials_json
+            self.calendar_id = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
         except Exception as e:
             print(f"Google setup error: {e}")
             self.google_credentials = None
+            self.calendar_id = None
 
     def get_current_ist_time(self):
         """Get current IST time correctly"""
@@ -102,7 +104,7 @@ class MorningInsightGenerator:
     
     def _get_special_calendar_events(self):
         """Check for special events"""
-        if not self.google_credentials:
+        if not self.google_credentials or not self.calendar_id:
             return None
             
         try:
@@ -117,8 +119,7 @@ class MorningInsightGenerator:
             start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
             end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
             
-            calendar_id = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
-            url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events"
             params = {
                 'timeMin': start_time,
                 'timeMax': end_time,
