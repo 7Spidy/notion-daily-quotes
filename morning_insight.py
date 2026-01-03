@@ -1,42 +1,108 @@
-import os
-import json
-from datetime import datetime
-from zoneinfo import ZoneInfo
-from openai import OpenAI
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from dotenv import load_dotenv
-import requests
-import time
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-# Load environment variables
-load_dotenv()
+print("=" * 60)
+print("☀️ MORNING INSIGHT - SCRIPT STARTED")
+print("=" * 60)
+
+import sys
+print("✅ sys imported")
+
+import os
+print("✅ os imported")
+
+import json
+print("✅ json imported")
+
+from datetime import datetime, timezone, timedelta
+print("✅ datetime imported")
+
+import time
+print("✅ time imported")
+
+try:
+    import requests
+    print("✅ requests imported")
+except ImportError as e:
+    print(f"❌ FATAL: requests not installed: {e}")
+    sys.exit(1)
+
+try:
+    import openai
+    print("✅ openai imported")
+except ImportError as e:
+    print(f"❌ FATAL: openai not installed: {e}")
+    sys.exit(1)
+
+try:
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.discovery import build
+    print("✅ google API imports successful")
+except ImportError as e:
+    print(f"⚠️ Warning: google API not installed: {e}")
+    Credentials = None
+    build = None
+
+print("\n" + "=" * 60)
+print("✅ ALL IMPORTS SUCCESSFUL")
+print("=" * 60 + "\n")
 
 class MorningInsightGenerator:
     """Generates personalized morning insights using GPT-5 mini and Google Calendar."""
     
     def __init__(self):
         """Initialize the generator with OpenAI and Google Calendar clients."""
-        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.calendar_service = self._setup_google_calendar()
-        self.ist_tz = ZoneInfo("Asia/Kolkata")
+        print("🔧 Initializing MorningInsightGenerator...")
         
-        # Notion configuration
-        self.notion_token = os.getenv("NOTION_API_KEY")
-        self.page_id = os.getenv("NOTION_PAGE_ID")
+        # Validate environment variables FIRST (like other scripts)
+        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.notion_token = os.getenv('NOTION_API_KEY')
+        self.page_id = os.getenv('NOTION_PAGE_ID')
+        
+        # Validate all required env vars
+        missing_vars = []
+        if not self.openai_api_key:
+            missing_vars.append('OPENAI_API_KEY')
+        if not self.notion_token:
+            missing_vars.append('NOTION_API_KEY')
+        if not self.page_id:
+            missing_vars.append('NOTION_PAGE_ID')
+        
+        if missing_vars:
+            raise ValueError(f"❌ Missing environment variables: {', '.join(missing_vars)}")
+        
+        print(f"   ✅ OPENAI_API_KEY: {'*' * 10}{self.openai_api_key[-4:]}")
+        print(f"   ✅ NOTION_API_KEY: {'*' * 10}{self.notion_token[-4:]}")
+        print(f"   ✅ NOTION_PAGE_ID: {self.page_id}")
+        
+        # Initialize OpenAI client
+        try:
+            self.openai_client = openai.OpenAI(api_key=self.openai_api_key)
+            print("   ✅ OpenAI client initialized")
+        except Exception as e:
+            print(f"   ❌ Failed to initialize OpenAI client: {e}")
+            raise
+        
+        # Setup Google Calendar
+        self.calendar_service = self._setup_google_calendar()
         
         # Configuration
-        self.work_threshold_hours = 2
         self.model = "gpt-5-mini"
         self.max_retries = 3
         self.retry_delay = 2
         
+        print("   ✅ MorningInsightGenerator initialized successfully\n")
+        
     def _setup_google_calendar(self):
         """Setup Google Calendar API with service account credentials."""
+        if not Credentials or not build:
+            print("   ⚠️ Google API libraries not available. Calendar features disabled.")
+            return None
+            
         try:
             creds_json = os.getenv("GOOGLE_CREDENTIALS")
             if not creds_json:
-                print("⚠️ Warning: GOOGLE_CREDENTIALS not found. Calendar features disabled.")
+                print("   ⚠️ GOOGLE_CREDENTIALS not found. Calendar features disabled.")
                 return None
             
             creds_dict = json.loads(creds_json)
@@ -45,29 +111,29 @@ class MorningInsightGenerator:
                 scopes=["https://www.googleapis.com/auth/calendar.readonly"]
             )
             
-            return build("calendar", "v3", credentials=credentials)
+            service = build("calendar", "v3", credentials=credentials)
+            print("   ✅ Google Calendar initialized")
+            return service
         except Exception as e:
-            print(f"⚠️ Warning: Google Calendar setup failed: {str(e)}")
+            print(f"   ⚠️ Google Calendar setup failed: {str(e)}")
             return None
     
-    def _get_today_date_formatted(self):
-        """Get today's date in 'Day, Month Date, Year' format in IST."""
-        now = datetime.now(self.ist_tz)
-        return now.strftime("%A, %B %d, %Y")
-    
-    def _get_current_time_ist(self):
-        """Get current time in HH:MM AM/PM IST format."""
-        now = datetime.now(self.ist_tz)
-        return now.strftime("%I:%M %p IST")
+    def get_current_ist_time(self):
+        """Get current IST time correctly (matching other scripts)"""
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now_ist = datetime.now(ist)
+        return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
     
     def _get_day_of_year(self):
         """Get current day number of the year."""
-        now = datetime.now(self.ist_tz)
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
         return now.timetuple().tm_yday
     
     def _get_day_of_week(self):
         """Get day of week."""
-        now = datetime.now(self.ist_tz)
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
         return now.strftime("%A")
     
     def _get_special_calendar_events(self):
@@ -76,7 +142,8 @@ class MorningInsightGenerator:
             return None
         
         try:
-            now = datetime.now(self.ist_tz)
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
             start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
             
@@ -95,19 +162,24 @@ class MorningInsightGenerator:
                 summary = event.get("summary", "").lower()
                 for keyword in special_keywords:
                     if keyword in summary:
+                        print(f"   🎉 Special event found: {event.get('summary')}")
                         return event.get("summary")
             
+            print("   ℹ️ No special events found on calendar")
             return None
         except Exception as e:
-            print(f"⚠️ Error checking special events: {str(e)}")
+            print(f"   ⚠️ Error checking special events: {str(e)}")
             return None
     
     def _generate_morning_insight(self):
         """Generate the 3-part morning insight using GPT-5 mini."""
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
+        
         day_of_year = self._get_day_of_year()
         day_of_week = self._get_day_of_week()
         special_event = self._get_special_calendar_events()
-        current_year = datetime.now(self.ist_tz).year
+        current_year = now.year
         
         # Determine day context
         if day_of_week in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
@@ -168,7 +240,7 @@ Day {day_of_year} of {current_year}. [stoic thought]
             return fallback
     
     def notion_retry(self, func, *args, **kwargs):
-        """Retry wrapper for Notion API calls."""
+        """Retry wrapper for Notion API calls (matching other scripts)"""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
@@ -186,9 +258,8 @@ Day {day_of_year} of {current_year}. [stoic thought]
                     raise e
     
     def _update_notion_page(self, insight_content):
-        """Update Notion page - INSERT AT TOP."""
-        current_date = self._get_today_date_formatted()
-        current_time = self._get_current_time_ist()
+        """Update Notion page - INSERT AT TOP (matching daily_briefing.py pattern)"""
+        current_time = self.get_current_ist_time()
         
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
@@ -196,29 +267,44 @@ Day {day_of_year} of {current_year}. [stoic thought]
             "Notion-Version": "2022-06-28"
         }
         
+        # Get existing blocks
         blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+        
+        print(f"   📡 Requesting: GET {blocks_url}")
+        print(f"   🔑 Token: {'*' * 10}{self.notion_token[-4:]}")
+        print(f"   📄 Page ID: {self.page_id}")
+        
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
+        print(f"   📊 Response status: {response.status_code}")
+        
         if response.status_code != 200:
-            raise Exception(f"Failed to get blocks: {response.status_code}")
+            # Enhanced error details
+            error_detail = response.text[:500] if response.text else "No error details"
+            print(f"   ❌ Error details: {error_detail}")
+            raise Exception(f"Failed to get blocks: HTTP {response.status_code} - {error_detail}")
             
         blocks = response.json()
         
+        # Find existing Daily Insight block
         insight_block_id = None
-        results = blocks.get('results', [])
-        
-        # Search for existing Morning Insight block
-        for block in results:
+        for block in blocks.get('results', []):
             if (block['type'] == 'callout' and 
                 block.get('callout', {}).get('rich_text') and
                 len(block['callout']['rich_text']) > 0 and
                 '☀️ Daily Insight' in block['callout']['rich_text'][0].get('plain_text', '')):
                 insight_block_id = block['id']
+                print(f"   ✅ Found existing Daily Insight block: {insight_block_id}")
                 break
         
-        full_content = f"☀️ Daily Insight - {current_date} - {current_time}\n\n{insight_content}"
+        full_content = f"☀️ Daily Insight - {current_time}\n\n{insight_content}"
         
-        new_block = {
+        # Truncate if needed to prevent API errors
+        if len(full_content) > 1900:
+            full_content = full_content[:1900] + "..."
+            print(f"   ⚠️ Content truncated to {len(full_content)} chars")
+        
+        new_block_data = {
             "callout": {
                 "rich_text": [
                     {
@@ -231,77 +317,65 @@ Day {day_of_year} of {current_year}. [stoic thought]
             }
         }
         
-        if insight_block_id:
-            # Update existing block
-            update_url = f"https://api.notion.com/v1/blocks/{insight_block_id}"
-            response = requests.patch(update_url, headers=headers, json=new_block, timeout=10)
-            if response.status_code != 200:
-                raise Exception(f"Update failed: {response.status_code}")
-            
-            # Move to top by deleting and recreating
-            try:
-                requests.delete(update_url, headers=headers, timeout=10)
-                time.sleep(0.5)
-                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
-                payload = {"children": [new_block]}
-                requests.patch(create_url, headers=headers, json=payload, timeout=10)
-                return "updated and moved to top"
-            except Exception as e:
-                print(f"   ⚠️ Repositioning failed, block updated in place: {e}")
+        try:
+            if insight_block_id:
+                # Update existing block
+                update_url = f"https://api.notion.com/v1/blocks/{insight_block_id}"
+                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
+                
                 return "updated"
-        else:
-            # Create new block at top
-            create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
-            payload = {"children": [new_block]}
-            response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
-            
-            if response.status_code != 200:
-                raise Exception(f"Create failed: {response.status_code}")
-            
-            return "created at top"
+            else:
+                # Create new block at beginning
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block_data]}
+                response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
+                
+                return "created"
+                
+        except Exception as e:
+            print(f"   💡 Detailed error: {str(e)}")
+            print(f"   📊 Content length: {len(full_content)} characters")
+            raise e
     
     def update_notion_page(self, insight_content):
-        """Update with retry."""
+        """Update with retry (matching other scripts)"""
         try:
             print("📝 Updating Notion page...")
             action = self.notion_retry(self._update_notion_page, insight_content)
-            print(f"   ✅ Successfully {action}!")
+            print(f"   ✅ Successfully {action} Daily Insight!")
         except Exception as e:
             print(f"❌ Notion update failed: {e}")
     
-    def generate_morning_insight(self):
-        """Main method to generate complete morning insight."""
-        try:
-            date_formatted = self._get_today_date_formatted()
-            time_formatted = self._get_current_time_ist()
-            
-            print(f"\n{'='*60}")
-            print(f"☀️ Morning Insight Generator (GPT-5 mini)")
-            print(f"🕐 {date_formatted} - {time_formatted}")
-            print(f"{'='*60}\n")
-            
-            # Generate insight
-            insight = self._generate_morning_insight()
-            
-            print(f"\n📄 Insight:\n{insight}\n")
-            
-            # Update Notion
-            self.update_notion_page(insight)
-            
-            print(f"\n{'='*60}")
-            print(f"✅ Completed!")
-            print(f"{'='*60}\n")
-            
-            return insight
-        except Exception as e:
-            print(f"❌ Critical error: {str(e)}")
-            return f"Error generating insights: {str(e)}"
+    def run(self):
+        """Main execution (matching other scripts' structure)"""
+        print(f"☀️ Morning Insight Generator (GPT-5 mini)")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
+        
+        print("🧠 Generating morning insight...")
+        insight = self._generate_morning_insight()
+        print(f"   📊 Generated insight: {len(insight)} characters\n")
+        
+        print(f"📄 Insight Preview:\n{insight}\n")
+        
+        self.update_notion_page(insight)
+        
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
     
     def save_to_log(self, content):
         """Save insights to a timestamped log file."""
         try:
             os.makedirs("logs", exist_ok=True)
-            now = datetime.now(self.ist_tz)
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
             filename = f"logs/morning_insight_{now.strftime('%Y%m%d_%H%M%S')}.txt"
             
             with open(filename, "w", encoding="utf-8") as f:
@@ -316,9 +390,12 @@ Day {day_of_year} of {current_year}. [stoic thought]
 
 def main():
     """Entry point for the application."""
-    generator = MorningInsightGenerator()
-    insight = generator.generate_morning_insight()
-    generator.save_to_log(insight)
+    try:
+        generator = MorningInsightGenerator()
+        generator.run()
+    except Exception as e:
+        print(f"\n❌ FATAL ERROR: {str(e)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
