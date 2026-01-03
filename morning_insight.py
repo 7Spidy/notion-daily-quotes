@@ -1,123 +1,46 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import openai
+import requests
+import json
+import os
+from datetime import datetime, timezone, timedelta
+import time
+
 print("=" * 60)
 print("☀️ MORNING INSIGHT - SCRIPT STARTED")
 print("=" * 60)
-
-import sys
-print("✅ sys imported")
-
-import os
-print("✅ os imported")
-
-import json
-print("✅ json imported")
-
-from datetime import datetime, timezone, timedelta
-print("✅ datetime imported")
-
-import time
-print("✅ time imported")
-
-try:
-    import requests
-    print("✅ requests imported")
-except ImportError as e:
-    print(f"❌ FATAL: requests not installed: {e}")
-    sys.exit(1)
-
-try:
-    import openai
-    print("✅ openai imported")
-except ImportError as e:
-    print(f"❌ FATAL: openai not installed: {e}")
-    sys.exit(1)
-
-try:
-    from google.oauth2.service_account import Credentials
-    from googleapiclient.discovery import build
-    print("✅ google API imports successful")
-except ImportError as e:
-    print(f"⚠️ Warning: google API not installed: {e}")
-    Credentials = None
-    build = None
-
-print("\n" + "=" * 60)
-print("✅ ALL IMPORTS SUCCESSFUL")
-print("=" * 60 + "\n")
 
 class MorningInsightGenerator:
     """Generates personalized morning insights using GPT-5 mini and Google Calendar."""
     
     def __init__(self):
         """Initialize - EXACTLY like daily_briefing.py"""
-        print("🔧 Initializing MorningInsightGenerator...")
-        
-        # Get environment variables - EXACTLY like daily_briefing.py
-        self.openai_api_key = os.getenv('OPENAI_API_KEY')
+        self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
         
-        # Validate
-        missing_vars = []
-        if not self.openai_api_key:
-            missing_vars.append('OPENAI_API_KEY')
-        if not self.notion_token:
-            missing_vars.append('NOTION_API_KEY')
-        if not self.page_id:
-            missing_vars.append('NOTION_PAGE_ID')
-        
-        if missing_vars:
-            raise ValueError(f"❌ Missing environment variables: {', '.join(missing_vars)}")
-        
-        print(f"   ✅ OPENAI_API_KEY: {'*' * 10}{self.openai_api_key[-4:]}")
-        print(f"   ✅ NOTION_API_KEY: {'*' * 10}{self.notion_token[-4:]}")
-        print(f"   ✅ NOTION_PAGE_ID: {self.page_id}")
-        
-        # Initialize OpenAI - EXACTLY like daily_briefing.py
-        self.openai_client = openai.OpenAI(api_key=self.openai_api_key)
-        print("   ✅ OpenAI client initialized")
-        
-        # Setup Google Calendar
-        self.calendar_service = self._setup_google_calendar()
-        
-        # Configuration
-        self.model = "gpt-5-mini"
+        # Retry settings
         self.max_retries = 3
-        self.retry_delay = 3  # Match daily_briefing.py
+        self.retry_delay = 3
         
-        print("   ✅ MorningInsightGenerator initialized successfully\n")
-        
-    def _setup_google_calendar(self):
-        """Setup Google Calendar - matching daily_briefing.py pattern"""
-        if not Credentials or not build:
-            print("   ⚠️ Google API not available")
-            return None
-            
+        # Google Calendar setup
         try:
             credentials_json = json.loads(os.getenv('GOOGLE_CREDENTIALS'))
             self.google_credentials = credentials_json
-            credentials = Credentials.from_service_account_info(
-                credentials_json,
-                scopes=['https://www.googleapis.com/auth/calendar.readonly']
-            )
-            service = build('calendar', 'v3', credentials=credentials)
-            print("   ✅ Google Calendar initialized")
-            return service
         except Exception as e:
-            print(f"   ⚠️ Google Calendar setup failed: {e}")
+            print(f"Google setup error: {e}")
             self.google_credentials = None
-            return None
-    
+
     def get_current_ist_time(self):
-        """Get current IST time - EXACTLY like daily_briefing.py"""
+        """Get current IST time correctly"""
         ist = timezone(timedelta(hours=5, minutes=30))
         now_ist = datetime.now(ist)
         return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
-    
+
     def notion_retry(self, func, *args, **kwargs):
-        """Retry wrapper - EXACTLY like daily_briefing.py"""
+        """Retry wrapper for Notion API calls with exponential backoff"""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
@@ -135,7 +58,38 @@ class MorningInsightGenerator:
                 else:
                     print(f"   ❌ All {self.max_retries} attempts failed")
                     raise e
-    
+
+    def get_google_access_token(self):
+        """Get access token for Google Calendar API"""
+        if not self.google_credentials:
+            return None
+            
+        try:
+            import jwt
+            now = int(time.time())
+            payload = {
+                'iss': self.google_credentials['client_email'],
+                'scope': 'https://www.googleapis.com/auth/calendar.readonly',
+                'aud': 'https://oauth2.googleapis.com/token',
+                'exp': now + 3600,
+                'iat': now
+            }
+            
+            private_key = self.google_credentials['private_key']
+            token = jwt.encode(payload, private_key, algorithm='RS256')
+            
+            data = {
+                'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                'assertion': token
+            }
+            
+            response = requests.post('https://oauth2.googleapis.com/token', data=data)
+            return response.json().get('access_token')
+            
+        except Exception as e:
+            print(f"Token generation error: {e}")
+            return None
+
     def _get_day_of_year(self):
         """Get day of year"""
         ist = timezone(timedelta(hours=5, minutes=30))
@@ -148,30 +102,47 @@ class MorningInsightGenerator:
     
     def _get_special_calendar_events(self):
         """Check for special events"""
-        if not self.calendar_service:
+        if not self.google_credentials:
             return None
-        
+            
         try:
+            access_token = self.get_google_access_token()
+            if not access_token:
+                return None
+                
+            headers = {'Authorization': f'Bearer {access_token}'}
+            
             ist = timezone(timedelta(hours=5, minutes=30))
             now = datetime.now(ist)
-            start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            start_time = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+            end_time = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
             
-            events_result = self.calendar_service.events().list(
-                calendarId='primary',
-                timeMin=start.isoformat(),
-                timeMax=end.isoformat(),
-                singleEvents=True
-            ).execute()
+            calendar_id = os.getenv('GOOGLE_CALENDAR_ID', 'primary')
+            url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
+            params = {
+                'timeMin': start_time,
+                'timeMax': end_time,
+                'singleEvents': True,
+                'orderBy': 'startTime'
+            }
             
-            events = events_result.get('items', [])
+            response = requests.get(url, headers=headers, params=params)
+            
+            if response.status_code != 200:
+                return None
+                
+            events_data = response.json()
+            events = events_data.get('items', [])
+            
             special_keywords = ['birthday', 'anniversary', 'festival', 'celebration']
             
             for event in events:
                 summary = event.get('summary', '').lower()
                 for keyword in special_keywords:
                     if keyword in summary:
+                        print(f"   🎉 Special event found: {event.get('summary')}")
                         return event.get('summary')
+            
             return None
         except Exception as e:
             print(f"   ⚠️ Calendar error: {e}")
@@ -211,7 +182,7 @@ Keep total under 100 words. This is read before morning journal."""
         try:
             print("   🤖 Calling GPT-5 mini...")
             response = self.openai_client.responses.create(
-                model=self.model,
+                model="gpt-5-mini",
                 input=prompt,
                 reasoning={'effort': 'low'},
                 text={'verbosity': 'low'}
@@ -232,19 +203,45 @@ Keep total under 100 words. This is read before morning journal."""
                 fallback += "What's one action today that aligns with your vision?"
             return fallback
     
+    def sanitize_content_for_notion(self, content):
+        """Sanitize content to prevent Notion API errors"""
+        if not content:
+            return "Daily insight content unavailable"
+        
+        import re
+        
+        # Remove control characters
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        
+        # Replace problematic unicode
+        content = content.encode('utf-8', errors='ignore').decode('utf-8')
+        
+        # Size limit
+        max_content_length = 1950
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+            print(f"   ⚠️ Content truncated to {max_content_length} characters")
+        
+        # Ensure not empty
+        if not content.strip():
+            content = "Daily insight generated successfully"
+        
+        return content
+
     def _update_notion_block_safe(self, insight_content):
         """Update Notion - EXACTLY like daily_briefing.py pattern"""
         headers = {
-            'Authorization': f'Bearer {self.notion_token}',
-            'Content-Type': 'application/json',
-            'Notion-Version': '2022-06-28'
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
         }
         
-        blocks_url = f'https://api.notion.com/v1/blocks/{self.page_id}/children'
+        # Get current blocks
+        blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
         if response.status_code != 200:
-            raise Exception(f'Failed to get blocks: HTTP {response.status_code}')
+            raise Exception(f"Failed to get blocks: HTTP {response.status_code}")
             
         blocks = response.json()
         
@@ -259,59 +256,80 @@ Keep total under 100 words. This is read before morning journal."""
                 break
         
         current_datetime = self.get_current_ist_time()
-        full_content = f'☀️ Daily Insight - {current_datetime}\n\n{insight_content}'
+        full_content = f"☀️ Daily Insight - {current_datetime}\n\n{insight_content}"
         
-        # Truncate if needed
-        if len(full_content) > 1900:
-            full_content = full_content[:1900] + '...'
+        # Sanitize
+        full_content = self.sanitize_content_for_notion(full_content)
+        
+        print(f"   📊 Final content size: {len(full_content)} characters")
         
         new_block_data = {
-            'callout': {
-                'rich_text': [{'type': 'text', 'text': {'content': full_content}}],
-                'icon': {'emoji': '☀️'},
-                'color': 'yellow_background'
+            "callout": {
+                "rich_text": [
+                    {
+                        "type": "text",
+                        "text": {
+                            "content": full_content
+                        }
+                    }
+                ],
+                "icon": {
+                    "emoji": "☀️"
+                },
+                "color": "yellow_background"
             }
         }
         
-        if insight_block_id:
-            update_url = f'https://api.notion.com/v1/blocks/{insight_block_id}'
-            response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
-            
-            if response.status_code != 200:
-                raise Exception(f'Failed to update: HTTP {response.status_code}')
-            return 'updated'
-        else:
-            create_url = f'https://api.notion.com/v1/blocks/{self.page_id}/children'
-            payload = {'children': [new_block_data]}
-            response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
-            
-            if response.status_code != 200:
-                raise Exception(f'Failed to create: HTTP {response.status_code}')
-            return 'created'
-    
+        try:
+            if insight_block_id:
+                # Update existing block
+                update_url = f"https://api.notion.com/v1/blocks/{insight_block_id}"
+                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
+                    
+                return "updated"
+            else:
+                # Create new block
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block_data]}
+                response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
+                
+                if response.status_code != 200:
+                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:300]}")
+                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
+                    
+                return "created"
+                
+        except Exception as e:
+            print(f"   💡 Detailed error: {str(e)}")
+            print(f"   📊 Content length: {len(full_content)} characters")
+            raise e
+
     def update_daily_insight(self, insight_content):
         """Update Notion with retry"""
         try:
-            print('📝 Updating Notion page...')
+            print("📝 Updating Notion page...")
             action = self.notion_retry(self._update_notion_block_safe, insight_content)
-            print(f'   ✅ Successfully {action} Daily Insight!')
+            print(f"   ✅ Successfully {action} Daily Insight!")
         except Exception as e:
-            print(f'❌ Notion update failed: {e}')
-    
+            print(f"❌ Failed to update Notion: {str(e)}")
+
     def run(self):
         """Main execution - EXACTLY like daily_briefing.py"""
-        print(f'☀️ Morning Insight Generator (GPT-5 mini)')
-        print(f'🕐 Started at: {self.get_current_ist_time()}')
-        print(f'🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n')
+        print(f"☀️ Morning Insight Generator (GPT-5 mini)")
+        print(f"🕐 Started at: {self.get_current_ist_time()}")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        print('🧠 Generating morning insight...')
+        print("🧠 Generating morning insight...")
         insight = self._generate_morning_insight()
-        print(f'   📊 Generated: {len(insight)} chars\n')
+        print(f"   📊 Generated: {len(insight)} chars\n")
         
         self.update_daily_insight(insight)
-        print(f'\n✅ Process completed at: {self.get_current_ist_time()}')
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     briefing = MorningInsightGenerator()
     briefing.run()
