@@ -4,9 +4,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from openai import OpenAI
 from google.oauth2.service_account import Credentials
-from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
+import requests
+import time
 
 # Load environment variables
 load_dotenv()
@@ -20,11 +21,15 @@ class MorningInsightGenerator:
         self.calendar_service = self._setup_google_calendar()
         self.ist_tz = ZoneInfo("Asia/Kolkata")
         
+        # Notion configuration
+        self.notion_token = os.getenv("NOTION_API_KEY")
+        self.page_id = os.getenv("NOTION_PAGE_ID")
+        
         # Configuration
         self.work_threshold_hours = 2
         self.model = "gpt-5-mini"
-        self.max_output_tokens = 300
-        self.temperature = 1
+        self.max_retries = 3
+        self.retry_delay = 2
         
     def _setup_google_calendar(self):
         """Setup Google Calendar API with service account credentials."""
@@ -55,10 +60,20 @@ class MorningInsightGenerator:
         now = datetime.now(self.ist_tz)
         return now.strftime("%I:%M %p IST")
     
-    def _check_for_work_day(self):
-        """Check if today has 2+ hours of work-related events."""
+    def _get_day_of_year(self):
+        """Get current day number of the year."""
+        now = datetime.now(self.ist_tz)
+        return now.timetuple().tm_yday
+    
+    def _get_day_of_week(self):
+        """Get day of week."""
+        now = datetime.now(self.ist_tz)
+        return now.strftime("%A")
+    
+    def _get_special_calendar_events(self):
+        """Check for birthdays, anniversaries, or special events today."""
         if not self.calendar_service:
-            return False
+            return None
         
         try:
             now = datetime.now(self.ist_tz)
@@ -73,135 +88,211 @@ class MorningInsightGenerator:
             ).execute()
             
             events = events_result.get("items", [])
-            work_events = [e for e in events if "work" in e.get("summary", "").lower() 
-                          or "meeting" in e.get("summary", "").lower()]
             
-            total_duration = 0
-            for event in work_events:
-                start_time = event.get("start", {}).get("dateTime")
-                end_time = event.get("end", {}).get("dateTime")
-                if start_time and end_time:
-                    start_dt = datetime.fromisoformat(start_time)
-                    end_dt = datetime.fromisoformat(end_time)
-                    duration = (end_dt - start_dt).total_seconds() / 3600
-                    total_duration += duration
+            # Look for birthday, anniversary, or festival keywords
+            special_keywords = ["birthday", "anniversary", "festival", "celebration"]
+            for event in events:
+                summary = event.get("summary", "").lower()
+                for keyword in special_keywords:
+                    if keyword in summary:
+                        return event.get("summary")
             
-            return total_duration >= self.work_threshold_hours
+            return None
         except Exception as e:
-            print(f"⚠️ Error checking work day: {str(e)}")
-            return False
+            print(f"⚠️ Error checking special events: {str(e)}")
+            return None
     
-    def _generate_wisdom(self):
-        """Generate a fresh piece of wisdom using GPT-5 mini."""
+    def _generate_morning_insight(self):
+        """Generate the 3-part morning insight using GPT-5 mini."""
+        day_of_year = self._get_day_of_year()
+        day_of_week = self._get_day_of_week()
+        special_event = self._get_special_calendar_events()
+        current_year = datetime.now(self.ist_tz).year
+        
+        # Determine day context
+        if day_of_week in ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]:
+            day_context = "work day - focus on professional tasks and career growth"
+        elif day_of_week == "Saturday":
+            day_context = "Saturday - time for fun, personal projects, family, friends, and games"
+        else:  # Sunday
+            day_context = "Sunday - reflection on the week, preparation for next week/month, and working on Notion goals and tasks"
+        
+        special_event_text = f"Special event today: {special_event}" if special_event else "No special events today. Check for Hindu festivals or astronomical events like new/full moon, eclipse."
+        
+        prompt = f"""Generate a brief 3-part morning insight for Day {day_of_year} of {current_year}. Today is {day_of_week}.
+
+PART 1: One line stoic reminder about the passage of time. Format: "Day {day_of_year} of {current_year}. [Add a brief stoic thought about time, mortality, or present moment - max 15 words]"
+
+PART 2: {special_event_text}
+If special event exists, acknowledge it warmly (1 short sentence).
+If no special event, check if today has significance (Hindu festival, new/full moon, eclipse, solstice, etc.) and mention it briefly. If nothing, skip this part entirely.
+
+PART 3: One thought-provoking line for journaling based on this context: {day_context}
+Make it personally inspiring, locally or globally relevant, and suitable for journaling reflection. Max 20 words.
+
+CRITICAL: Keep total response under 100 words. Be concise, meaningful, and thought-provoking. This is the first thing I read before writing my journal.
+
+Format exactly like this (skip Part 2 if no special event):
+Day {day_of_year} of {current_year}. [stoic thought]
+
+[Part 2 if applicable]
+
+[One thought-provoking question or statement for journaling]"""
+
         try:
-            response = self.openai_client.chat.completions.create(
+            print("   🤖 Calling GPT-5 mini for morning insight...")
+            
+            response = self.openai_client.responses.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a wisdom advisor who provides short, inspiring, and actionable morning insights. Keep responses to 1-2 sentences maximum."
-                    },
-                    {
-                        "role": "user",
-                        "content": "Generate a fresh and unique piece of morning wisdom for today. Make it inspiring and practical."
-                    }
-                ],
-                max_completion_tokens=self.max_output_tokens,
-                temperature=self.temperature
+                input=prompt,
+                reasoning={"effort": "low"},
+                text={"verbosity": "low"}
             )
             
-            return response.choices[0].message.content.strip()
+            insight = response.output_text.strip()
+            print("   ✅ Morning insight generated with GPT-5 mini")
+            return insight
+            
         except Exception as e:
-            print(f"❌ Error generating wisdom: {str(e)}")
-            return "Every day is a fresh opportunity to grow and make a difference. 🌱"
+            print(f"   ❌ GPT-5 mini error: {str(e)}")
+            # Fallback
+            fallback = f"Day {day_of_year} of {current_year}. Each day is a gift - use it wisely.\n\n"
+            if special_event:
+                fallback += f"Today: {special_event}\n\n"
+            if day_of_week == "Sunday":
+                fallback += "What did this week teach you about your goals and priorities?"
+            elif day_of_week == "Saturday":
+                fallback += "What brings you joy today that you've been postponing?"
+            else:
+                fallback += "What's one small action today that aligns with your bigger vision?"
+            return fallback
     
-    def _generate_work_insight(self):
-        """Generate insights for a work-heavy day."""
-        try:
-            response = self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=[
+    def notion_retry(self, func, *args, **kwargs):
+        """Retry wrapper for Notion API calls."""
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                if attempt > 1:
+                    print(f"   🔄 Retry attempt {attempt}/{self.max_retries}")
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                if attempt < self.max_retries:
+                    wait_time = self.retry_delay * attempt
+                    print(f"   ⚠️ Attempt {attempt} failed, retrying in {wait_time}s...")
+                    print(f"      Error: {str(e)}")
+                    time.sleep(wait_time)
+                else:
+                    print(f"   ❌ All {self.max_retries} attempts failed: {str(e)}")
+                    raise e
+    
+    def _update_notion_page(self, insight_content):
+        """Update Notion page - INSERT AT TOP."""
+        current_date = self._get_today_date_formatted()
+        current_time = self._get_current_time_ist()
+        
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        
+        blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+        response = requests.get(blocks_url, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            raise Exception(f"Failed to get blocks: {response.status_code}")
+            
+        blocks = response.json()
+        
+        insight_block_id = None
+        results = blocks.get('results', [])
+        
+        # Search for existing Morning Insight block
+        for block in results:
+            if (block['type'] == 'callout' and 
+                block.get('callout', {}).get('rich_text') and
+                len(block['callout']['rich_text']) > 0 and
+                '☀️ Daily Insight' in block['callout']['rich_text'][0].get('plain_text', '')):
+                insight_block_id = block['id']
+                break
+        
+        full_content = f"☀️ Daily Insight - {current_date} - {current_time}\n\n{insight_content}"
+        
+        new_block = {
+            "callout": {
+                "rich_text": [
                     {
-                        "role": "system",
-                        "content": "You are a productivity coach. Provide brief, actionable advice for managing a busy work day."
-                    },
-                    {
-                        "role": "user",
-                        "content": "Today has back-to-back work commitments. Give me one key insight to stay productive and balanced."
+                        "type": "text",
+                        "text": {"content": full_content}
                     }
                 ],
-                max_completion_tokens=self.max_output_tokens,
-                temperature=self.temperature
-            )
+                "icon": {"emoji": "☀️"},
+                "color": "yellow_background"
+            }
+        }
+        
+        if insight_block_id:
+            # Update existing block
+            update_url = f"https://api.notion.com/v1/blocks/{insight_block_id}"
+            response = requests.patch(update_url, headers=headers, json=new_block, timeout=10)
+            if response.status_code != 200:
+                raise Exception(f"Update failed: {response.status_code}")
             
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"❌ Error generating work insight: {str(e)}")
-            return "Focus on your top 3 priorities. Everything else can wait. 💼"
+            # Move to top by deleting and recreating
+            try:
+                requests.delete(update_url, headers=headers, timeout=10)
+                time.sleep(0.5)
+                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+                payload = {"children": [new_block]}
+                requests.patch(create_url, headers=headers, json=payload, timeout=10)
+                return "updated and moved to top"
+            except Exception as e:
+                print(f"   ⚠️ Repositioning failed, block updated in place: {e}")
+                return "updated"
+        else:
+            # Create new block at top
+            create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
+            payload = {"children": [new_block]}
+            response = requests.patch(create_url, headers=headers, json=payload, timeout=10)
+            
+            if response.status_code != 200:
+                raise Exception(f"Create failed: {response.status_code}")
+            
+            return "created at top"
     
-    def _generate_rest_insight(self):
-        """Generate insights for a rest/leisure day."""
+    def update_notion_page(self, insight_content):
+        """Update with retry."""
         try:
-            response = self.openai_client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a wellness advisor. Provide brief advice for enjoying a relaxed day."
-                    },
-                    {
-                        "role": "user",
-                        "content": "Today is light on work commitments. Give me one insight on how to best enjoy this day."
-                    }
-                ],
-                max_completion_tokens=self.max_output_tokens,
-                temperature=self.temperature
-            )
-            
-            return response.choices[0].message.content.strip()
+            print("📝 Updating Notion page...")
+            action = self.notion_retry(self._update_notion_page, insight_content)
+            print(f"   ✅ Successfully {action}!")
         except Exception as e:
-            print(f"❌ Error generating rest insight: {str(e)}")
-            return "Use this free time to recharge and do something you love. 🌿"
+            print(f"❌ Notion update failed: {e}")
     
     def generate_morning_insight(self):
         """Main method to generate complete morning insight."""
         try:
-            # Get timestamp
             date_formatted = self._get_today_date_formatted()
             time_formatted = self._get_current_time_ist()
             
-            # Check if work day
-            is_work_day = self._check_for_work_day()
+            print(f"\n{'='*60}")
+            print(f"☀️ Morning Insight Generator (GPT-5 mini)")
+            print(f"🕐 {date_formatted} - {time_formatted}")
+            print(f"{'='*60}\n")
             
-            # Generate insights
-            wisdom = self._generate_wisdom()
+            # Generate insight
+            insight = self._generate_morning_insight()
             
-            if is_work_day:
-                day_insight = self._generate_work_insight()
-                day_type = "💼 Work Day"
-            else:
-                day_insight = self._generate_rest_insight()
-                day_type = "🌿 Rest Day"
+            print(f"\n📄 Insight:\n{insight}\n")
             
-            # Format output
-            output = f"""
-╔════════════════════════════════════════════╗
-║  AI-Generated Morning Insights             ║
-║  {date_formatted} - {time_formatted}          ║
-╚════════════════════════════════════════════╝
-
-📌 Daily Wisdom
-{wisdom}
-
-📊 Today's Focus: {day_type}
-{day_insight}
-
-═══════════════════════════════════════════════
-Generated using GPT-5 mini | IST Timezone
-═══════════════════════════════════════════════
-"""
+            # Update Notion
+            self.update_notion_page(insight)
             
-            return output.strip()
+            print(f"\n{'='*60}")
+            print(f"✅ Completed!")
+            print(f"{'='*60}\n")
+            
+            return insight
         except Exception as e:
             print(f"❌ Critical error: {str(e)}")
             return f"Error generating insights: {str(e)}"
@@ -227,7 +318,6 @@ def main():
     """Entry point for the application."""
     generator = MorningInsightGenerator()
     insight = generator.generate_morning_insight()
-    print(insight)
     generator.save_to_log(insight)
 
 
