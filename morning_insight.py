@@ -35,6 +35,17 @@ except ImportError as e:
     sys.exit(1)
 
 try:
+    from dotenv import load_dotenv
+    print("✅ dotenv imported")
+    # Load environment variables from .env file
+    load_dotenv()
+    print("✅ .env file loaded")
+except ImportError:
+    print("⚠️ Warning: python-dotenv not installed, relying on system environment variables")
+except Exception as e:
+    print(f"⚠️ Warning: Could not load .env file: {e}")
+
+try:
     from google.oauth2.service_account import Credentials
     from googleapiclient.discovery import build
     print("✅ google API imports successful")
@@ -59,6 +70,12 @@ class MorningInsightGenerator:
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
         
+        # Debug: Show what we found
+        print(f"   🔍 Checking environment variables...")
+        print(f"      OPENAI_API_KEY: {'Found' if self.openai_api_key else 'NOT FOUND'}")
+        print(f"      NOTION_API_KEY: {'Found' if self.notion_token else 'NOT FOUND'}")
+        print(f"      NOTION_PAGE_ID: {'Found' if self.page_id else 'NOT FOUND'}")
+        
         # Validate all required env vars
         missing_vars = []
         if not self.openai_api_key:
@@ -69,6 +86,22 @@ class MorningInsightGenerator:
             missing_vars.append('NOTION_PAGE_ID')
         
         if missing_vars:
+            print("\n" + "=" * 60)
+            print("❌ CONFIGURATION ERROR")
+            print("=" * 60)
+            print(f"Missing environment variables: {', '.join(missing_vars)}")
+            print("\n🛠️ HOW TO FIX:")
+            print("1. Create a .env file in the same directory as this script")
+            print("2. Add these lines to your .env file:")
+            print("")
+            print("   OPENAI_API_KEY=your_openai_key_here")
+            print("   NOTION_API_KEY=your_notion_integration_token_here")
+            print("   NOTION_PAGE_ID=your_notion_page_id_here")
+            print("   GOOGLE_CREDENTIALS=your_google_credentials_json_here")
+            print("")
+            print("📌 Current directory:", os.getcwd())
+            print("📁 Looking for .env file at:", os.path.join(os.getcwd(), '.env'))
+            print("=" * 60)
             raise ValueError(f"❌ Missing environment variables: {', '.join(missing_vars)}")
         
         print(f"   ✅ OPENAI_API_KEY: {'*' * 10}{self.openai_api_key[-4:]}")
