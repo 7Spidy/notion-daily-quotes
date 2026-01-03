@@ -71,9 +71,8 @@ jobs:
         with:
           python-version: '3.11'
 
-           - name: Install dependencies
-        run: pip install openai requests PyJWT cryptography google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
-
+      - name: Install dependencies
+        run: pip install openai google-auth google-api-python-client python-dotenv
 
       - name: Create Google Credentials
         env:
@@ -81,16 +80,12 @@ jobs:
         run: |
           echo "$GOOGLE_CREDENTIALS" > credentials.json
 
-         - name: Generate Morning Insight
+      - name: Generate Morning Insight
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
         run: |
           python morning_insight.py
-
 
       - name: Commit and push logs
         run: |
