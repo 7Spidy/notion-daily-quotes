@@ -80,12 +80,16 @@ jobs:
         run: |
           echo "$GOOGLE_CREDENTIALS" > credentials.json
 
-      - name: Generate Morning Insight
+         - name: Generate Morning Insight
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
         run: |
           python morning_insight.py
+
 
       - name: Commit and push logs
         run: |
