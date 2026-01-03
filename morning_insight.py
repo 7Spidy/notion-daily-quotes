@@ -8,15 +8,10 @@ import os
 from datetime import datetime, timezone, timedelta
 import time
 
-print("=" * 60)
-print("☀️ MORNING INSIGHT - SCRIPT STARTED")
-print("=" * 60)
-
 class MorningInsightGenerator:
-    """Generates personalized morning insights using GPT-5 mini and Google Calendar."""
+    """Generates brief 3-part morning insights: Stoic reminder + Special events + Daily inspiration"""
     
     def __init__(self):
-        """Initialize - EXACTLY like daily_briefing.py"""
         self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
@@ -36,13 +31,13 @@ class MorningInsightGenerator:
             self.calendar_id = None
 
     def get_current_ist_time(self):
-        """Get current IST time correctly"""
+        """Get current IST time"""
         ist = timezone(timedelta(hours=5, minutes=30))
         now_ist = datetime.now(ist)
         return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
 
     def notion_retry(self, func, *args, **kwargs):
-        """Retry wrapper for Notion API calls with exponential backoff"""
+        """Retry wrapper for Notion API calls"""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
@@ -92,18 +87,8 @@ class MorningInsightGenerator:
             print(f"Token generation error: {e}")
             return None
 
-    def _get_day_of_year(self):
-        """Get day of year"""
-        ist = timezone(timedelta(hours=5, minutes=30))
-        return datetime.now(ist).timetuple().tm_yday
-    
-    def _get_day_of_week(self):
-        """Get day of week"""
-        ist = timezone(timedelta(hours=5, minutes=30))
-        return datetime.now(ist).strftime("%A")
-    
-    def _get_special_calendar_events(self):
-        """Check for special events"""
+    def get_special_calendar_events(self):
+        """Check for birthdays, anniversaries, and special events"""
         if not self.google_credentials or not self.calendar_id:
             return None
             
@@ -135,6 +120,7 @@ class MorningInsightGenerator:
             events_data = response.json()
             events = events_data.get('items', [])
             
+            # Look for special keywords
             special_keywords = ['birthday', 'anniversary', 'festival', 'celebration']
             
             for event in events:
@@ -148,40 +134,43 @@ class MorningInsightGenerator:
         except Exception as e:
             print(f"   ⚠️ Calendar error: {e}")
             return None
-    
-    def _generate_morning_insight(self):
-        """Generate morning insight"""
+
+    def generate_morning_insight(self):
+        """Generate 3-part morning insight"""
         ist = timezone(timedelta(hours=5, minutes=30))
         now = datetime.now(ist)
         
-        day_of_year = self._get_day_of_year()
-        day_of_week = self._get_day_of_week()
-        special_event = self._get_special_calendar_events()
+        day_of_year = now.timetuple().tm_yday
+        day_of_week = now.strftime("%A")
         current_year = now.year
+        special_event = self.get_special_calendar_events()
         
+        # Determine day context
         if day_of_week in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
-            day_context = 'work day - focus on professional tasks and career growth'
+            day_context = 'work day - focusing on professional excellence and meaningful contribution'
         elif day_of_week == 'Saturday':
             day_context = 'Saturday - time for fun, personal projects, family, friends, and games'
-        else:
-            day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals and tasks'
+        else:  # Sunday
+            day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals'
         
-        special_text = f'Special event today: {special_event}' if special_event else 'No special events today. Check for Hindu festivals or astronomical events like new/full moon, eclipse.'
-        
-        prompt = f"""Generate a brief 3-part morning insight for Day {day_of_year} of {current_year}. Today is {day_of_week}.
+        prompt = f"""Generate a brief 3-part morning insight. Be concise and profound. MAX 100 words total.
 
-PART 1: One line stoic reminder. Format: "Day {day_of_year} of {current_year}. [brief stoic thought - max 15 words]"
+Today is {day_of_week}, Day {day_of_year} of {current_year}.
 
-PART 2: {special_text}
-If special event, acknowledge warmly (1 sentence). If no special event but today has significance (Hindu festival, new/full moon, eclipse), mention briefly. Otherwise skip.
+**PART 1 - Stoic Time Reminder (1 sentence):**
+Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
 
-PART 3: One thought-provoking line for journaling based on: {day_context}
-Make it inspiring and suitable for reflection. Max 20 words.
+**PART 2 - Special Event (if applicable):**
+{f"Today's special event: {special_event}. Write 1 warm sentence acknowledging it." if special_event else "Check if today is a Hindu festival, new moon, full moon, or eclipse. If yes, mention it in 1 sentence. If no special significance, skip this part entirely."}
 
-Keep total under 100 words. This is read before morning journal."""
+**PART 3 - Daily Inspiration (1-2 sentences):**
+Based on: {day_context}
+Write ONE thought-provoking question or insight for journaling. Make it personal, actionable, and inspiring. Under 25 words.
+
+Format: Three distinct parts separated by blank lines. No labels like "Part 1" or headings. Just the content."""
 
         try:
-            print("   🤖 Calling GPT-5 mini...")
+            print("   🤖 Generating insight with GPT-5 mini...")
             response = self.openai_client.responses.create(
                 model="gpt-5-mini",
                 input=prompt,
@@ -193,51 +182,49 @@ Keep total under 100 words. This is read before morning journal."""
             return insight
         except Exception as e:
             print(f"   ❌ GPT error: {e}")
-            fallback = f"Day {day_of_year} of {current_year}. Each day is a gift - use it wisely.\n\n"
+            
+            # Fallback based on day
+            fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
+            
             if special_event:
-                fallback += f"Today: {special_event}\n\n"
+                fallback += f"Today: {special_event} 🎉\n\n"
+            
             if day_of_week == 'Sunday':
-                fallback += "What did this week teach you about your goals?"
+                fallback += "What's one pattern from this week that you want to keep, and one you want to change?"
             elif day_of_week == 'Saturday':
-                fallback += "What brings you joy that you've been postponing?"
+                fallback += "What brings you pure joy that you've been postponing? Today's the day."
             else:
-                fallback += "What's one action today that aligns with your vision?"
+                fallback += "If today mattered twice as much, what would you prioritize differently?"
+            
             return fallback
-    
+
     def sanitize_content_for_notion(self, content):
         """Sanitize content to prevent Notion API errors"""
         if not content:
-            return "Daily insight content unavailable"
+            return "Morning insight content unavailable"
         
         import re
-        
-        # Remove control characters
         content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
-        
-        # Replace problematic unicode
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
         
-        # Size limit
         max_content_length = 1950
         if len(content) > max_content_length:
             content = content[:max_content_length] + "..."
             print(f"   ⚠️ Content truncated to {max_content_length} characters")
         
-        # Ensure not empty
         if not content.strip():
-            content = "Daily insight generated successfully"
+            content = "Morning insight generated successfully"
         
         return content
 
     def _update_notion_block_safe(self, insight_content):
-        """Update Notion - EXACTLY like daily_briefing.py pattern"""
+        """Update Notion with morning insight"""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
         
-        # Get current blocks
         blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
@@ -246,20 +233,18 @@ Keep total under 100 words. This is read before morning journal."""
             
         blocks = response.json()
         
-        # Find existing block
+        # Find existing morning insight block
         insight_block_id = None
         for block in blocks.get('results', []):
             if (block['type'] == 'callout' and 
                 block.get('callout', {}).get('rich_text') and
                 len(block['callout']['rich_text']) > 0 and
-                '☀️ Daily Insight' in block['callout']['rich_text'][0].get('plain_text', '')):
+                '☀️ Morning Insight' in block['callout']['rich_text'][0].get('plain_text', '')):
                 insight_block_id = block['id']
                 break
         
         current_datetime = self.get_current_ist_time()
-        full_content = f"☀️ Daily Insight - {current_datetime}\n\n{insight_content}"
-        
-        # Sanitize
+        full_content = f"☀️ Morning Insight - {current_datetime}\n\n{insight_content}"
         full_content = self.sanitize_content_for_notion(full_content)
         
         print(f"   📊 Final content size: {len(full_content)} characters")
@@ -277,7 +262,7 @@ Keep total under 100 words. This is read before morning journal."""
                 "icon": {
                     "emoji": "☀️"
                 },
-                "color": "yellow_background"
+                "color": "orange_background"
             }
         }
         
@@ -309,28 +294,28 @@ Keep total under 100 words. This is read before morning journal."""
             print(f"   📊 Content length: {len(full_content)} characters")
             raise e
 
-    def update_daily_insight(self, insight_content):
+    def update_morning_insight(self, insight_content):
         """Update Notion with retry"""
         try:
-            print("📝 Updating Notion page...")
+            print("📝 Updating Notion page with morning insight...")
             action = self.notion_retry(self._update_notion_block_safe, insight_content)
-            print(f"   ✅ Successfully {action} Daily Insight!")
+            print(f"   ✅ Successfully {action} Morning Insight!")
         except Exception as e:
             print(f"❌ Failed to update Notion: {str(e)}")
 
     def run(self):
-        """Main execution - EXACTLY like daily_briefing.py"""
+        """Main execution"""
         print(f"☀️ Morning Insight Generator (GPT-5 mini)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        print("🧠 Generating morning insight...")
-        insight = self._generate_morning_insight()
-        print(f"   📊 Generated: {len(insight)} chars\n")
+        print("🧠 Generating 3-part morning insight...")
+        insight = self.generate_morning_insight()
+        print(f"   📊 Generated: {len(insight)} characters\n")
         
-        self.update_daily_insight(insight)
+        self.update_morning_insight(insight)
         print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
-    briefing = MorningInsightGenerator()
-    briefing.run()
+    generator = MorningInsightGenerator()
+    generator.run()
