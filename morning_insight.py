@@ -21,10 +21,10 @@ class MorningInsightGenerator:
         self.ist_tz = ZoneInfo("Asia/Kolkata")
         
         # Configuration
-      self.work_threshold_hours = 2
-    self.model = "gpt-5-mini"        # Correct
-    self.max_output_tokens = 300     # Changed from max_completion_tokens for GPT-5 compliance
-    self.temperature = 1             # Safer default for reasoning-capable models (or remove entirely)
+        self.work_threshold_hours = 2
+        self.model = "gpt-5-mini"
+        self.max_output_tokens = 300
+        self.temperature = 1
         
     def _setup_google_calendar(self):
         """Setup Google Calendar API with service account credentials."""
@@ -106,7 +106,7 @@ class MorningInsightGenerator:
                         "content": "Generate a fresh and unique piece of morning wisdom for today. Make it inspiring and practical."
                     }
                 ],
-                max_completion_tokens=self.max_completion_tokens,
+                max_completion_tokens=self.max_output_tokens,
                 temperature=self.temperature
             )
             
@@ -130,7 +130,7 @@ class MorningInsightGenerator:
                         "content": "Today has back-to-back work commitments. Give me one key insight to stay productive and balanced."
                     }
                 ],
-                max_completion_tokens=self.max_completion_tokens,
+                max_completion_tokens=self.max_output_tokens,
                 temperature=self.temperature
             )
             
@@ -154,7 +154,7 @@ class MorningInsightGenerator:
                         "content": "Today is light on work commitments. Give me one insight on how to best enjoy this day."
                     }
                 ],
-                max_completion_tokens=self.max_completion_tokens,
+                max_completion_tokens=self.max_output_tokens,
                 temperature=self.temperature
             )
             
