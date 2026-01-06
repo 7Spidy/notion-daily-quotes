@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
 import openai
 import requests
 import json
@@ -9,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import time
 
 class MorningInsightGenerator:
-    """Generates brief 3-part morning insights: Stoic reminder + Special events + Daily inspiration"""
+    """Generates brief 4-part morning insights: Stoic reminder + Special events + Daily inspiration + Journal prompt"""
     
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -41,26 +40,26 @@ class MorningInsightGenerator:
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
-                    print(f"   Attempt {attempt}/{self.max_retries}...")
+                    print(f"  Attempt {attempt}/{self.max_retries}...")
                 result = func(*args, **kwargs)
                 if attempt > 1:
-                    print(f"   ✅ Succeeded on attempt {attempt}")
+                    print(f"  ✅ Succeeded on attempt {attempt}")
                 return result
             except Exception as e:
                 if attempt < self.max_retries:
                     wait_time = self.retry_delay * attempt
-                    print(f"   ⚠️ Attempt {attempt} failed: {str(e)[:100]}")
-                    print(f"   ⏳ Waiting {wait_time}s before retry...")
+                    print(f"  ⚠️ Attempt {attempt} failed: {str(e)[:100]}")
+                    print(f"  ⏳ Waiting {wait_time}s before retry...")
                     time.sleep(wait_time)
                 else:
-                    print(f"   ❌ All {self.max_retries} attempts failed")
+                    print(f"  ❌ All {self.max_retries} attempts failed")
                     raise e
 
     def get_google_access_token(self):
         """Get access token for Google Calendar API"""
         if not self.google_credentials:
             return None
-            
+        
         try:
             import jwt
             now = int(time.time())
@@ -82,7 +81,7 @@ class MorningInsightGenerator:
             
             response = requests.post('https://oauth2.googleapis.com/token', data=data)
             return response.json().get('access_token')
-            
+        
         except Exception as e:
             print(f"Token generation error: {e}")
             return None
@@ -91,12 +90,12 @@ class MorningInsightGenerator:
         """Check for birthdays, anniversaries, and special events"""
         if not self.google_credentials or not self.calendar_id:
             return None
-            
+        
         try:
             access_token = self.get_google_access_token()
             if not access_token:
                 return None
-                
+            
             headers = {'Authorization': f'Bearer {access_token}'}
             
             ist = timezone(timedelta(hours=5, minutes=30))
@@ -116,7 +115,7 @@ class MorningInsightGenerator:
             
             if response.status_code != 200:
                 return None
-                
+            
             events_data = response.json()
             events = events_data.get('items', [])
             
@@ -127,16 +126,16 @@ class MorningInsightGenerator:
                 summary = event.get('summary', '').lower()
                 for keyword in special_keywords:
                     if keyword in summary:
-                        print(f"   🎉 Special event found: {event.get('summary')}")
+                        print(f"  🎉 Special event found: {event.get('summary')}")
                         return event.get('summary')
             
             return None
         except Exception as e:
-            print(f"   ⚠️ Calendar error: {e}")
+            print(f"  ⚠️ Calendar error: {e}")
             return None
 
     def generate_morning_insight(self):
-        """Generate 3-part morning insight"""
+        """Generate 4-part morning insight with journal prompt"""
         ist = timezone(timedelta(hours=5, minutes=30))
         now = datetime.now(ist)
         
@@ -153,7 +152,7 @@ class MorningInsightGenerator:
         else:  # Sunday
             day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals'
         
-        prompt = f"""Generate a brief 3-part morning insight. Be concise and profound. MAX 100 words total.
+        prompt = f"""Generate a brief 4-part morning insight. Be concise and profound. MAX 120 words total.
 
 Today is {day_of_week}, Day {day_of_year} of {current_year}.
 
@@ -165,23 +164,33 @@ Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thou
 
 **PART 3 - Daily Inspiration (1-2 sentences):**
 Based on: {day_context}
-Write ONE thought-provoking question or insight for journaling. Make it personal, actionable, and inspiring. Under 25 words.
+Write ONE thought-provoking question or insight for the day. Make it personal, actionable, and inspiring. Under 25 words.
 
-Format: Three distinct parts separated by blank lines. No labels like "Part 1" or headings. Just the content."""
+**PART 4 - Daily Journal Prompt:**
+Create a unique journaling prompt based on today's context ({day_of_week}, {day_context}, and any special event). The prompt should:
+- Be thought-provoking and encourage deep reflection
+- Relate naturally to the day's energy and purpose
+- Be specific enough to guide writing but open enough for personal exploration
+- Start with "📝 Journal Prompt:" 
+- Keep it under 30 words
+
+Format: Four distinct parts separated by blank lines. No labels like "Part 1" except for the journal prompt marker. Just the content."""
 
         try:
-            print("   🤖 Generating insight with GPT-5 mini...")
+            print("  🤖 Generating insight with GPT-5 mini...")
             response = self.openai_client.responses.create(
                 model="gpt-5-mini",
                 input=prompt,
                 reasoning={'effort': 'low'},
                 text={'verbosity': 'low'}
             )
+            
             insight = response.output_text.strip()
-            print("   ✅ Insight generated")
+            print("  ✅ Insight generated")
             return insight
+        
         except Exception as e:
-            print(f"   ❌ GPT error: {e}")
+            print(f"  ❌ GPT error: {e}")
             
             # Fallback based on day
             fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
@@ -190,11 +199,14 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
                 fallback += f"Today: {special_event} 🎉\n\n"
             
             if day_of_week == 'Sunday':
-                fallback += "What's one pattern from this week that you want to keep, and one you want to change?"
+                fallback += "What's one pattern from this week that you want to keep, and one you want to change?\n\n"
+                fallback += "📝 Journal Prompt: Reflect on the past week - what moment made you feel most alive, and what would you do differently?"
             elif day_of_week == 'Saturday':
-                fallback += "What brings you pure joy that you've been postponing? Today's the day."
+                fallback += "What brings you pure joy that you've been postponing? Today's the day.\n\n"
+                fallback += "📝 Journal Prompt: If you had zero obligations today, what would you do just because it makes you happy?"
             else:
-                fallback += "If today mattered twice as much, what would you prioritize differently?"
+                fallback += "If today mattered twice as much, what would you prioritize differently?\n\n"
+                fallback += "📝 Journal Prompt: What's one small action today that would make you proud when you reflect back this evening?"
             
             return fallback
 
@@ -210,7 +222,7 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
         max_content_length = 1950
         if len(content) > max_content_length:
             content = content[:max_content_length] + "..."
-            print(f"   ⚠️ Content truncated to {max_content_length} characters")
+            print(f"  ⚠️ Content truncated to {max_content_length} characters")
         
         if not content.strip():
             content = "Morning insight generated successfully"
@@ -230,7 +242,7 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
         
         if response.status_code != 200:
             raise Exception(f"Failed to get blocks: HTTP {response.status_code}")
-            
+        
         blocks = response.json()
         
         # Find existing morning insight block
@@ -247,7 +259,7 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
         full_content = f"☀️ Morning Insight - {current_datetime}\n\n{insight_content}"
         full_content = self.sanitize_content_for_notion(full_content)
         
-        print(f"   📊 Final content size: {len(full_content)} characters")
+        print(f"  📊 Final content size: {len(full_content)} characters")
         
         new_block_data = {
             "callout": {
@@ -273,9 +285,9 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
                 response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
                 
                 if response.status_code != 200:
-                    print(f"   ❌ Update failed: {response.status_code} - {response.text[:300]}")
+                    print(f"  ❌ Update failed: {response.status_code} - {response.text[:300]}")
                     raise Exception(f"Failed to update block: HTTP {response.status_code}")
-                    
+                
                 return "updated"
             else:
                 # Create new block
@@ -284,14 +296,14 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
                 response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
                 
                 if response.status_code != 200:
-                    print(f"   ❌ Create failed: {response.status_code} - {response.text[:300]}")
+                    print(f"  ❌ Create failed: {response.status_code} - {response.text[:300]}")
                     raise Exception(f"Failed to create block: HTTP {response.status_code}")
-                    
-                return "created"
                 
+                return "created"
+        
         except Exception as e:
-            print(f"   💡 Detailed error: {str(e)}")
-            print(f"   📊 Content length: {len(full_content)} characters")
+            print(f"  💡 Detailed error: {str(e)}")
+            print(f"  📊 Content length: {len(full_content)} characters")
             raise e
 
     def update_morning_insight(self, insight_content):
@@ -299,7 +311,7 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
         try:
             print("📝 Updating Notion page with morning insight...")
             action = self.notion_retry(self._update_notion_block_safe, insight_content)
-            print(f"   ✅ Successfully {action} Morning Insight!")
+            print(f"  ✅ Successfully {action} Morning Insight!")
         except Exception as e:
             print(f"❌ Failed to update Notion: {str(e)}")
 
@@ -309,9 +321,9 @@ Format: Three distinct parts separated by blank lines. No labels like "Part 1" o
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        print("🧠 Generating 3-part morning insight...")
+        print("🧠 Generating 4-part morning insight with journal prompt...")
         insight = self.generate_morning_insight()
-        print(f"   📊 Generated: {len(insight)} characters\n")
+        print(f"  📊 Generated: {len(insight)} characters\n")
         
         self.update_morning_insight(insight)
         print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
