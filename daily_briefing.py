@@ -384,7 +384,8 @@ class StrategicDailyBriefing:
             except Exception as e:
                 print(f"   ⚠️ Error parsing block {block_type}: {e}")
         
-        full_content = '\n'.join(content_parts)
+        full_content = '
+'.join(content_parts)
         return full_content[:800] if full_content else "No content found"
 
     def _query_recent_journal_entries_with_page_content(self):
@@ -489,7 +490,7 @@ class StrategicDailyBriefing:
         import re
         
         # Remove control characters and non-printable characters
-        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        content = re.sub(r'[-\b\u000B\f\u000E-\u001F-]', '', content)
         
         # Replace problematic unicode characters
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
@@ -507,38 +508,66 @@ class StrategicDailyBriefing:
         return content
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events, office_start=None, office_end=None):
-        """Generate strategic briefing using GPT-5 mini - 80% CHEAPER! Respects Office calendar block"""
+        """Generate 5-part strategic briefing using GPT-5 mini"""
         current_datetime = self.get_current_ist_time()
         
-        # Prepare condensed journal content for analysis
+        # Prepare journal content
         journal_summaries = []
         for i, entry in enumerate(journal_entries[:2], 1):
             areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-            content_summary = entry['content'][:300] if entry['content'] else 'No content'
-            journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text} Content: {content_summary}")
+            content_summary = entry['content'][:400] if entry['content'] else 'No content'
+            journal_summaries.append(f"Entry {i}: '{entry['title']}' ({entry['date']}) Areas: {areas_text}
+Content: {content_summary}")
         
-        journal_text = ' | '.join(journal_summaries)
+        journal_text = '
+
+'.join(journal_summaries)
         
-        # Build schedule constraints
-        if office_start and office_end:
-            schedule_constraint = f"CRITICAL: Office block detected ({office_start} - {office_end}). NEVER suggest activities during these office hours. Only suggest activities outside office hours: 6:30 AM-{office_start} (morning) and {office_end}-10:00 PM (evening)."
-            available_times = f"morning (6:30-{office_start} AM) and evening ({office_end}-10:00 PM)"
-        else:
-            schedule_constraint = "CRITICAL: Never suggest activities between 10:00 PM - 6:30 AM (sleep). Only suggest activities for: 6:30 AM-9:00 AM (morning), 6:30 PM-10:00 PM (evening)."
-            available_times = "morning (6:30-9:00 AM) and evening (6:30-10:00 PM)"
+        # Calendar analysis
+        calendar_text = '
+'.join(calendar_events[:10])
         
-        prompt = f"""Create exactly 5 concise numbered insights (2-3 sentences each max). No intro text. {schedule_constraint} DATA - WEEKLY: {'; '.join(checklist_items[:2])}. GOALS: {'; '.join(strategic_goals[:2])}. JOURNAL: {journal_text}. CALENDAR: {'; '.join(calendar_events[:3])}. Format: 1.[morning preparation insight during available morning time - be concise] 2.[morning focus insight for {available_times} - be concise] 3.[Personal journal analysis using 'you' language - analyze actual content, emotions, patterns. Never say 'author'. Be insightful but concise - 2-3 sentences max] 4.[calendar overview for available times - be concise] 5.[evening wind-down insight for available evening time - be concise]. Keep each point under 60 words to prevent truncation. NEVER suggest activities during office hours {f'({office_start}-{office_end})' if office_start else '(if detected)'}."""
-        
+        prompt = f"""Generate a 5-part daily briefing. Address the user as "You" (not "I" or third person). Use warm, personal, inspiring tone.
+
+**DATA:**
+Journal Entries: {journal_text}
+
+Calendar Today: {calendar_text}
+
+Weekly Goals (Pending): {'; '.join(checklist_items[:5])}
+
+Strategic Goals (In Progress): {'; '.join(strategic_goals[:3])}
+
+**5-PART FORMAT (Use numbered sections 1-5):**
+
+**1. Morning Reflection (3-4 sentences)**
+Based on journal entries and today's calendar, write a thoughtful, gratitude-focused opening. Acknowledge what you've been working on and what today holds. Be warm and encouraging.
+
+**2. Weekly Goals Progress (2-3 sentences)**
+Review the pending weekly goals above. Give insight on progress and inspiration to tackle them. Be specific about which goals to prioritize.
+
+**3. Strategic Goals Progress (2-3 sentences)**
+Review the strategic goals above. Connect them to your bigger vision. Offer encouragement and suggest how to move them forward today.
+
+**4. Today's Time-Based Action Plan**
+Look at the calendar events. Identify FREE time slots (avoid suggesting during scheduled events). Suggest specific tasks from sections 2 and 3 with exact times. Format: "Time: Task". Suggest 2-3 time slots only.
+
+**5. Fun & Unwind (1-2 sentences)**
+Based on interests (games, creative projects, family time), suggest one fun activity with a specific evening time to unwind. Be playful and energizing.
+
+**CRITICAL:**
+- Address user as "You" throughout
+- Keep TOTAL under 350 words
+- Each section should flow naturally
+- Be specific with times in section 4 and 5
+- Avoid office hours if detected: {f'{office_start}-{office_end}' if office_start else 'Check calendar'}
+- Use warm, personal, motivating language"""
+
         try:
-            print("   🤖 Calling GPT-5 mini (80% cheaper!)...")
-            if office_start and office_end:
-                print(f"   🔒 Schedule protection: Office block ({office_start}-{office_end}) - NO ACTIVITIES")
-            else:
-                print(f"   ℹ️ No Office block detected - standard schedule (6:30 AM-10 PM)")
+            print("   🤖 Calling GPT-5 mini...")
             
-            # CHANGED: Using GPT-5 mini responses API instead of chat completions
             response = self.openai_client.responses.create(
-                model="gpt-5-mini",  # ⭐ CHANGED FROM gpt-4o-mini
+                model="gpt-5-mini",
                 input=prompt,
                 reasoning={"effort": "medium"},
                 text={"verbosity": "medium"}
@@ -546,23 +575,27 @@ class StrategicDailyBriefing:
             
             insights = response.output_text.strip()
             
-            # Clean up author references
-            insights = insights.replace("the author", "you")
-            insights = insights.replace("Author", "You")
-            insights = insights.replace("author", "you")
-            insights = insights.replace("writer", "you")
-            insights = insights.replace("the writer", "you")
-            insights = insights.replace("Writer", "You")
-            
-            print("   ✅ Strategic briefing generated with GPT-5 mini")
+            print("   ✅ 5-part briefing generated with GPT-5 mini")
             return insights
             
         except Exception as e:
             print(f"   ❌ GPT-5 mini error: {e}")
-            if office_start and office_end:
-                fallback = f"1. Prepare mentally for your workday during early morning hours (6:30-{office_start} AM) - set intentions and review priorities before office time begins.\n2. Your office block is protected ({office_start}-{office_end}) - focus completely on professional tasks during this time.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. After office hours ({office_end} onwards), transition to personal time - decompress with activities that help you unwind.\n5. Evening wind-down ({office_end[0:2]}:00-9:30 PM) - engage in relaxing activities before sleep to prepare for quality rest."
-            else:
-                fallback = "1. Prepare mentally for your day during early morning hours (6:30-9:00 AM) - set intentions and review priorities.\n2. Your calendar is clear during morning and evening - use 6:30 AM-9 AM for focused work and 6:30 PM-10 PM for personal activities.\n3. Your recent journal entries show thoughtful self-reflection and balanced priorities - continue this valuable practice for clarity and growth.\n4. Review your calendar events and adjust your schedule accordingly - flexibility supports sustainable performance.\n5. Evening wind-down (8:00-9:30 PM) - engage in relaxing activities before sleep to prepare for quality rest."
+            fallback = f"""**1. Morning Reflection**
+Good morning! You've been making thoughtful progress in your journey. Today holds new opportunities to align your actions with your values.
+
+**2. Weekly Goals Progress**
+You have several weekly goals pending. Focus on completing the most impactful ones today - small consistent steps lead to big wins.
+
+**3. Strategic Goals Progress**
+Your strategic goals are moving forward. Keep the momentum going by dedicating focused time to them today.
+
+**4. Today's Time-Based Action Plan**
+7:00 AM: Review and prioritize weekly goals
+2:00 PM: Work on strategic goal milestone
+5:00 PM: Plan tomorrow's priorities
+
+**5. Fun & Unwind**
+8:00 PM: Take time for a game session or creative project you enjoy - you've earned it!"""
             return fallback
 
     def _update_notion_block_safe(self, briefing_content):
@@ -588,14 +621,16 @@ class StrategicDailyBriefing:
             if (block['type'] == 'callout' and 
                 block.get('callout', {}).get('rich_text') and
                 len(block['callout']['rich_text']) > 0 and
-                'AI-Generated Morning Insights' in block['callout']['rich_text'][0].get('plain_text', '')):
+                'AI-Generated Daily Briefing' in block['callout']['rich_text'][0].get('plain_text', '')):
                 briefing_block_id = block['id']
                 break
         
         current_datetime = self.get_current_ist_time()
         
         # Create header and content separately to manage size
-        header_content = f"🤖 AI-Generated Morning Insights - {current_datetime}\n\nBased on your calendar, recent notes, and patterns, here's your personalized briefing for today.\n\n**TODAY'S FOCUS:**\n"
+        header_content = f"🤖 AI-Generated Daily Briefing - {current_datetime}
+
+"
         
         # Combine header and briefing content
         full_content = header_content + briefing_content
@@ -653,20 +688,19 @@ class StrategicDailyBriefing:
     def update_daily_briefing_section(self, briefing_content):
         """Update briefing with enhanced retry and error handling"""
         try:
-            print("📝 Updating Notion page with complete briefing...")
+            print("📝 Updating Notion page with 5-part briefing...")
             action = self.notion_retry(self._update_notion_block_safe, briefing_content)
-            print(f"   ✅ Successfully {action} complete daily briefing!")
+            print(f"   ✅ Successfully {action} daily briefing!")
         except Exception as e:
             print(f"❌ Failed to update Notion after all attempts: {str(e)}")
 
     def run(self):
         """Main execution"""
         print(f"🎯 Strategic Daily Briefing Generator (GPT-5 mini)")
-        print(f"💰 Running at 80% cost savings!")
+        print(f"📋 5-Part Format: Reflection + Weekly + Strategic + Schedule + Fun")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
-        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay")
-        print(f"😴 Sleep schedule: {self.sleep_start} - {self.sleep_end} (protected)")
-        print(f"📖 Content management: Prevents truncation with size optimization\n")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay
+")
         
         print("📅 Checking calendar for Office block...")
         office_start, office_end = self.get_office_block_times()
@@ -687,13 +721,14 @@ class StrategicDailyBriefing:
         journal_entries = self.get_recent_journal_entries_with_page_content()
         print(f"   ✅ Analyzed {len(journal_entries)} journal entries")
         
-        print("\n🧠 Generating personalized insights with GPT-5 mini...")
+        print("
+🧠 Generating 5-part personalized briefing with GPT-5 mini...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events, office_start, office_end)
         print(f"   📊 Generated briefing: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
-        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
-        print(f"💰 Saved ~80% on API costs with GPT-5 mini!")
+        print(f"
+✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
