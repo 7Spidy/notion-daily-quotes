@@ -457,17 +457,28 @@ class StrategicDailyBriefing:
         
         journal_text = ' | '.join(journal_summaries)
         
-        # Prepare calendar events with clear BUSY markers
+        # Prepare calendar events with clear time ranges
         calendar_text = []
         busy_times = []
+        occupied_ranges = []
+        
         for event in calendar_events:
             time_slot = event['time']
             summary = event['summary']
             calendar_text.append(f"{time_slot}: {summary}")
+            
+            # Track occupied times with ranges
             if time_slot != 'N/A' and time_slot != 'All day':
                 busy_times.append(time_slot)
+                # Parse time to create hour ranges (e.g., 14:00 means 14:00-15:00 is busy)
+                try:
+                    hour = int(time_slot.split(':')[0])
+                    occupied_ranges.append(f"{hour:02d}:00-{hour+1:02d}:00")
+                except:
+                    pass
         
         busy_times_text = ', '.join(busy_times) if busy_times else 'None'
+        occupied_ranges_text = ', '.join(occupied_ranges) if occupied_ranges else 'None'
         
         prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
@@ -475,8 +486,13 @@ DATA:
 - WEEKLY TASKS: {'; '.join(checklist_items[:5])}
 - STRATEGIC GOALS: {'; '.join(strategic_goals[:3])}
 - RECENT JOURNAL ENTRIES: {journal_text}
-- TODAY'S CALENDAR (BUSY TIMES): {'; '.join(calendar_text)}
-- OCCUPIED TIME SLOTS (DO NOT SUGGEST THESE): {busy_times_text}
+- TODAY'S CALENDAR EVENTS: {'; '.join(calendar_text)}
+
+⚠️ CRITICAL - OCCUPIED TIME SLOTS (FORBIDDEN TO SUGGEST):
+Specific busy times: {busy_times_text}
+Occupied hour ranges: {occupied_ranges_text}
+
+YOU MUST NOT SUGGEST ANY TIME THAT OVERLAPS WITH THE ABOVE.
 
 Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
 
@@ -488,11 +504,25 @@ Format your response EXACTLY as follows (number each point):
 
 3. [STRATEGIC TASK SUGGESTION] From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
 
-4. [CALENDAR TIME SLOTS] **CRITICAL**: Look at the BUSY TIMES listed above. Identify 2-3 time blocks that are COMPLETELY FREE and VACANT (not listed in the calendar). Suggest ONLY times between 06:00-22:00 that have NO events scheduled. Format as "Consider: [free time] for [task from point 2 or 3]". If most of the day is busy, suggest early morning (06:00-08:00) or late evening (20:00-22:00) slots that are unoccupied. DO NOT suggest any time that overlaps with calendar events.
+4. [CALENDAR TIME SLOTS] ⚠️ ULTRA CRITICAL INSTRUCTION ⚠️
+BEFORE suggesting ANY time slot, you MUST:
+a) Check if that time appears in "Specific busy times" above - if YES, DO NOT suggest it
+b) Check if that time falls within "Occupied hour ranges" above - if YES, DO NOT suggest it
+c) Only suggest times that are COMPLETELY VACANT and FREE
 
-5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day (after 14:00). Make it specific and engaging (1-2 sentences).
+Rules for suggesting times:
+- Look at the busy times list: {busy_times_text}
+- Look at occupied ranges: {occupied_ranges_text}
+- If 14:00 is busy, the entire 14:00-15:00 range is occupied - DON'T suggest it
+- If 16:00 is busy, the entire 16:00-17:00 range is occupied - DON'T suggest it
+- Only suggest times between 06:00-22:00 that have ZERO overlap with busy periods
+- If the day is mostly busy, suggest early morning (06:00-08:00) or late evening (20:00-22:00)
+- Suggest 2-3 completely free time blocks
+- Format: "Consider: [free time that doesn't appear in busy list] for [task]"
 
-IMPORTANT: For point 4, you MUST avoid suggesting times that are already occupied. Look at the busy times carefully and suggest ONLY vacant slots.
+5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day (after 14:00 AND not overlapping with busy times). Make it specific and engaging (1-2 sentences).
+
+ABSOLUTE RULE FOR POINT 4: Every time you want to suggest MUST be cross-checked against the busy times list. If there's ANY overlap, find a different time. This is non-negotiable.
 
 Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
@@ -520,9 +550,9 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
 3. Strategic Action: Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
 
-4. Time Blocks: Review your calendar for genuinely free slots - look for gaps between events or early morning/late evening windows when nothing is scheduled.
+4. Time Blocks: Early morning (06:30-08:00) or late evening (20:00-21:30) work best. Check your calendar and find genuinely vacant slots between events.
 
-5. Afternoon Fun: Take a creative break - try sketching, listening to music, or a short nature walk."""
+5. Afternoon Fun: During a free window after 14:00, enjoy a creative break with music, sketching, or a refreshing walk."""
             
             return fallback
 
