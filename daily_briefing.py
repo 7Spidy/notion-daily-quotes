@@ -445,30 +445,38 @@ class StrategicDailyBriefing:
         return content
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-        """Generate 5-part daily insight using GPT"""
-        current_datetime = self.get_current_ist_time()
-        
-        # Prepare journal content
-        journal_summaries = []
-        for i, entry in enumerate(journal_entries[:3], 1):
-            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-            content_summary = entry['content'][:400] if entry['content'] else 'No content'
-            journal_summaries.append(f"{entry['title']} ({entry['date']}) - {areas_text}: {content_summary}")
-        
-        journal_text = ' | '.join(journal_summaries)
-        
-        # Prepare calendar events
-        calendar_text = []
-        for event in calendar_events:
-            calendar_text.append(f"{event['time']}: {event['summary']}")
-        
-        prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
+    """Generate 5-part daily insight using GPT"""
+    current_datetime = self.get_current_ist_time()
+    
+    # Prepare journal content
+    journal_summaries = []
+    for i, entry in enumerate(journal_entries[:3], 1):
+        areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
+        content_summary = entry['content'][:400] if entry['content'] else 'No content'
+        journal_summaries.append(f"{entry['title']} ({entry['date']}) - {areas_text}: {content_summary}")
+    
+    journal_text = ' | '.join(journal_summaries)
+    
+    # Prepare calendar events with clear BUSY markers
+    calendar_text = []
+    busy_times = []
+    for event in calendar_events:
+        time_slot = event['time']
+        summary = event['summary']
+        calendar_text.append(f"{time_slot}: {summary}")
+        if time_slot != 'N/A' and time_slot != 'All day':
+            busy_times.append(time_slot)
+    
+    busy_times_text = ', '.join(busy_times) if busy_times else 'None'
+    
+    prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
 DATA:
 - WEEKLY TASKS: {'; '.join(checklist_items[:5])}
 - STRATEGIC GOALS: {'; '.join(strategic_goals[:3])}
 - RECENT JOURNAL ENTRIES: {journal_text}
-- TODAY'S CALENDAR: {'; '.join(calendar_text)}
+- TODAY'S CALENDAR (BUSY TIMES): {'; '.join(calendar_text)}
+- OCCUPIED TIME SLOTS (DO NOT SUGGEST THESE): {busy_times_text}
 
 Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
 
@@ -480,41 +488,44 @@ Format your response EXACTLY as follows (number each point):
 
 3. [STRATEGIC TASK SUGGESTION] From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
 
-4. [CALENDAR TIME SLOTS] Look at the calendar events and identify 2-3 vacant time blocks suitable for working on tasks from points 2 and 3. Format as "Consider: [time] for [task type]" (2-3 suggestions max).
+4. [CALENDAR TIME SLOTS] **CRITICAL**: Look at the BUSY TIMES listed above. Identify 2-3 time blocks that are COMPLETELY FREE and VACANT (not listed in the calendar). Suggest ONLY times between 06:00-22:00 that have NO events scheduled. Format as "Consider: [free time] for [task from point 2 or 3]". If most of the day is busy, suggest early morning (06:00-08:00) or late evening (20:00-22:00) slots that are unoccupied. DO NOT suggest any time that overlaps with calendar events.
 
-5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day. Make it specific and engaging (1-2 sentences).
+5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day (after 14:00). Make it specific and engaging (1-2 sentences).
 
-Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
+IMPORTANT: For point 4, you MUST avoid suggesting times that are already occupied. Look at the busy times carefully and suggest ONLY vacant slots.
 
-        try:
-            print("  🤖 Calling GPT...")
-            
-            response = self.openai_client.responses.create(
-                model="gpt-5-mini",
-                input=prompt,
-                reasoning={"effort": "medium"},
-                text={"verbosity": "low"}
-            )
-            
-            insights = response.output_text.strip()
-            
-            print("  ✅ Daily insight generated")
-            return insights
-            
-        except Exception as e:
-            print(f"  ❌ GPT error: {e}")
-            # Fallback response
-            fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
+
+    try:
+        print("  🤖 Calling GPT...")
+        
+        response = self.openai_client.responses.create(
+            model="gpt-5-mini",
+            input=prompt,
+            reasoning={"effort": "medium"},
+            text={"verbosity": "low"}
+        )
+        
+        insights = response.output_text.strip()
+        
+        print("  ✅ Daily insight generated")
+        return insights
+        
+    except Exception as e:
+        print(f"  ❌ GPT error: {e}")
+        # Fallback response
+        fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
 
 2. Weekly Focus: Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
 
 3. Strategic Action: Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
 
-4. Time Blocks: Check your calendar for open slots - morning or late afternoon work well for focused tasks.
+4. Time Blocks: Review your calendar for genuinely free slots - look for gaps between events or early morning/late evening windows when nothing is scheduled.
 
 5. Afternoon Fun: Take a creative break - try sketching, listening to music, or a short nature walk."""
-            
-            return fallback
+        
+        return fallback
+
 
     def _update_notion_block_safe(self, briefing_content):
         """Update Notion page with enhanced error handling"""
