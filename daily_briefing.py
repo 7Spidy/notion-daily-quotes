@@ -414,27 +414,22 @@ class StrategicDailyBriefing:
         
         for entry in results:
             try:
-                # Get journal title
                 title = 'Journal Entry'
                 if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
                     title = entry['properties']['Name']['title'][0]['plain_text']
                 
-                # Get life areas
                 life_areas = []
                 if 'Life Area' in entry['properties'] and entry['properties']['Life Area']['multi_select']:
                     life_areas = [area['name'] for area in entry['properties']['Life Area']['multi_select']]
                 
-                # Get created date
                 created_date = 'Unknown date'
                 if 'Created time' in entry['properties'] and entry['properties']['Created time']['created_time']:
                     created_date = entry['properties']['Created time']['created_time'][:10]
                 
-                # Get page ID to fetch content
                 page_id = entry['id']
                 
                 print(f"   📖 Reading: {title} ({created_date})")
                 
-                # Fetch the actual page content
                 page_content = self._get_page_content(page_id)
                 
                 journal_entries.append({
@@ -489,19 +484,14 @@ class StrategicDailyBriefing:
         
         import re
         
-        # Remove control characters and non-printable characters
         content = re.sub(r'[-\b\u000B\f\u000E-\u001F-]', '', content)
-        
-        # Replace problematic unicode characters
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
         
-        # Increased limits to prevent truncation
         max_content_length = 1950
         if len(content) > max_content_length:
             content = content[:max_content_length] + "..."
             print(f"   ⚠️ Content truncated from {len(content)} to {max_content_length} characters")
         
-        # Ensure content is not empty
         if not content.strip():
             content = "Daily briefing generated successfully"
         
@@ -509,9 +499,7 @@ class StrategicDailyBriefing:
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events, office_start=None, office_end=None):
         """Generate 5-part strategic briefing using GPT-5 mini"""
-        current_datetime = self.get_current_ist_time()
         
-        # Prepare journal content
         journal_summaries = []
         for i, entry in enumerate(journal_entries[:2], 1):
             areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
@@ -522,8 +510,6 @@ Content: {content_summary}")
         journal_text = '
 
 '.join(journal_summaries)
-        
-        # Calendar analysis
         calendar_text = '
 '.join(calendar_events[:10])
         
@@ -580,7 +566,7 @@ Based on interests (games, creative projects, family time), suggest one fun acti
             
         except Exception as e:
             print(f"   ❌ GPT-5 mini error: {e}")
-            fallback = f"""**1. Morning Reflection**
+            fallback = """**1. Morning Reflection**
 Good morning! You've been making thoughtful progress in your journey. Today holds new opportunities to align your actions with your values.
 
 **2. Weekly Goals Progress**
@@ -606,7 +592,6 @@ Your strategic goals are moving forward. Keep the momentum going by dedicating f
             "Notion-Version": "2022-06-28"
         }
         
-        # Get current blocks
         blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
         response = requests.get(blocks_url, headers=headers, timeout=10)
         
@@ -615,7 +600,6 @@ Your strategic goals are moving forward. Keep the momentum going by dedicating f
             
         blocks = response.json()
         
-        # Find existing briefing block
         briefing_block_id = None
         for block in blocks.get('results', []):
             if (block['type'] == 'callout' and 
@@ -626,16 +610,10 @@ Your strategic goals are moving forward. Keep the momentum going by dedicating f
                 break
         
         current_datetime = self.get_current_ist_time()
-        
-        # Create header and content separately to manage size
         header_content = f"🤖 AI-Generated Daily Briefing - {current_datetime}
 
 "
-        
-        # Combine header and briefing content
         full_content = header_content + briefing_content
-        
-        # Ensure total content is within Notion's limits
         full_content = self.sanitize_content_for_notion(full_content)
         
         print(f"   📊 Final content size: {len(full_content)} characters")
@@ -659,7 +637,6 @@ Your strategic goals are moving forward. Keep the momentum going by dedicating f
         
         try:
             if briefing_block_id:
-                # Update existing block
                 update_url = f"https://api.notion.com/v1/blocks/{briefing_block_id}"
                 response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
                 
@@ -669,7 +646,6 @@ Your strategic goals are moving forward. Keep the momentum going by dedicating f
                     
                 return "updated"
             else:
-                # Create new block
                 create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
                 payload = {"children": [new_block_data]}
                 response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
