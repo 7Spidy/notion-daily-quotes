@@ -445,31 +445,31 @@ class StrategicDailyBriefing:
         return content
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-    """Generate 5-part daily insight using GPT"""
-    current_datetime = self.get_current_ist_time()
-    
-    # Prepare journal content
-    journal_summaries = []
-    for i, entry in enumerate(journal_entries[:3], 1):
-        areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
-        content_summary = entry['content'][:400] if entry['content'] else 'No content'
-        journal_summaries.append(f"{entry['title']} ({entry['date']}) - {areas_text}: {content_summary}")
-    
-    journal_text = ' | '.join(journal_summaries)
-    
-    # Prepare calendar events with clear BUSY markers
-    calendar_text = []
-    busy_times = []
-    for event in calendar_events:
-        time_slot = event['time']
-        summary = event['summary']
-        calendar_text.append(f"{time_slot}: {summary}")
-        if time_slot != 'N/A' and time_slot != 'All day':
-            busy_times.append(time_slot)
-    
-    busy_times_text = ', '.join(busy_times) if busy_times else 'None'
-    
-    prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
+        """Generate 5-part daily insight using GPT"""
+        current_datetime = self.get_current_ist_time()
+        
+        # Prepare journal content
+        journal_summaries = []
+        for i, entry in enumerate(journal_entries[:3], 1):
+            areas_text = ', '.join(entry['life_areas']) if entry['life_areas'] else 'General'
+            content_summary = entry['content'][:400] if entry['content'] else 'No content'
+            journal_summaries.append(f"{entry['title']} ({entry['date']}) - {areas_text}: {content_summary}")
+        
+        journal_text = ' | '.join(journal_summaries)
+        
+        # Prepare calendar events with clear BUSY markers
+        calendar_text = []
+        busy_times = []
+        for event in calendar_events:
+            time_slot = event['time']
+            summary = event['summary']
+            calendar_text.append(f"{time_slot}: {summary}")
+            if time_slot != 'N/A' and time_slot != 'All day':
+                busy_times.append(time_slot)
+        
+        busy_times_text = ', '.join(busy_times) if busy_times else 'None'
+        
+        prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
 DATA:
 - WEEKLY TASKS: {'; '.join(checklist_items[:5])}
@@ -496,25 +496,25 @@ IMPORTANT: For point 4, you MUST avoid suggesting times that are already occupie
 
 Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
-    try:
-        print("  🤖 Calling GPT...")
-        
-        response = self.openai_client.responses.create(
-            model="gpt-5-mini",
-            input=prompt,
-            reasoning={"effort": "medium"},
-            text={"verbosity": "low"}
-        )
-        
-        insights = response.output_text.strip()
-        
-        print("  ✅ Daily insight generated")
-        return insights
-        
-    except Exception as e:
-        print(f"  ❌ GPT error: {e}")
-        # Fallback response
-        fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+        try:
+            print("  🤖 Calling GPT...")
+            
+            response = self.openai_client.responses.create(
+                model="gpt-5-mini",
+                input=prompt,
+                reasoning={"effort": "medium"},
+                text={"verbosity": "low"}
+            )
+            
+            insights = response.output_text.strip()
+            
+            print("  ✅ Daily insight generated")
+            return insights
+            
+        except Exception as e:
+            print(f"  ❌ GPT error: {e}")
+            # Fallback response
+            fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
 
 2. Weekly Focus: Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
 
@@ -523,9 +523,8 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 4. Time Blocks: Review your calendar for genuinely free slots - look for gaps between events or early morning/late evening windows when nothing is scheduled.
 
 5. Afternoon Fun: Take a creative break - try sketching, listening to music, or a short nature walk."""
-        
-        return fallback
-
+            
+            return fallback
 
     def _update_notion_block_safe(self, briefing_content):
         """Update Notion page with enhanced error handling"""
