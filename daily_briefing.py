@@ -322,7 +322,8 @@ class StrategicDailyBriefing:
             except Exception as e:
                 print(f"  ⚠️ Error parsing block {block_type}: {e}")
         
-        full_content = '\n'.join(content_parts)
+        full_content = '
+'.join(content_parts)
         return full_content[:800] if full_content else "No content found"
 
     def _query_recent_journal_entries_with_page_content(self):
@@ -427,7 +428,7 @@ class StrategicDailyBriefing:
         import re
         
         # Remove control characters and non-printable characters
-        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
+        content = re.sub(r'[-\b\u000B\f\u000E-\u001F-]', '', content)
         
         # Replace problematic unicode characters
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
@@ -480,6 +481,9 @@ class StrategicDailyBriefing:
         busy_times_text = ', '.join(busy_times) if busy_times else 'None'
         occupied_ranges_text = ', '.join(occupied_ranges) if occupied_ranges else 'None'
         
+        # Determine if there are free slots available
+        has_free_slots = len(busy_times) < 12  # If less than 12 hours are occupied, there are free slots
+        
         prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
 DATA:
@@ -488,43 +492,48 @@ DATA:
 - RECENT JOURNAL ENTRIES: {journal_text}
 - TODAY'S CALENDAR EVENTS: {'; '.join(calendar_text)}
 
-⚠️ CRITICAL - OCCUPIED TIME SLOTS (FORBIDDEN TO SUGGEST):
+⚠️ OCCUPIED TIME SLOTS (DO NOT SUGGEST THESE):
 Specific busy times: {busy_times_text}
 Occupied hour ranges: {occupied_ranges_text}
 
-YOU MUST NOT SUGGEST ANY TIME THAT OVERLAPS WITH THE ABOVE.
+FREE SLOTS AVAILABLE: {"Yes - suggest specific times" if has_free_slots else "No - day is packed, give suggestions without times"}
 
-Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
+Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief and warm.
 
-Format your response EXACTLY as follows (number each point):
+Format your response EXACTLY as follows:
 
-1. [GRATITUDE INSIGHT] Review their recent journal entries and calendar events. Find something unique or meaningful. Give a thoughtful, grateful insight (2-3 sentences max).
+1. Review their recent journal entries and calendar events. Find something meaningful to be grateful for. Give a thoughtful insight (2-3 sentences max). DO NOT use brackets or labels like [GRATITUDE INSIGHT].
 
-2. [WEEKLY TASK SUGGESTION] From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences).
+2. From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences). NO brackets or labels.
 
-3. [STRATEGIC TASK SUGGESTION] From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
+3. From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences). NO brackets or labels.
 
-4. [CALENDAR TIME SLOTS] ⚠️ ULTRA CRITICAL INSTRUCTION ⚠️
-BEFORE suggesting ANY time slot, you MUST:
-a) Check if that time appears in "Specific busy times" above - if YES, DO NOT suggest it
-b) Check if that time falls within "Occupied hour ranges" above - if YES, DO NOT suggest it
-c) Only suggest times that are COMPLETELY VACANT and FREE
+4. Time slot suggestions:
+   IF FREE SLOTS ARE AVAILABLE ({has_free_slots}):
+   - Check the busy times: {busy_times_text}
+   - Check occupied ranges: {occupied_ranges_text}
+   - Suggest 2-3 specific FREE time blocks between 06:00-22:00 that don't overlap with busy times
+   - Format: "Consider: [specific free time] for [task from point 2 or 3]"
+   - DO NOT suggest any time that appears in the busy list above
+   
+   IF NO FREE SLOTS (day is packed):
+   - Just give task suggestions without specific times
+   - Say something like "Focus on [task] when you find a gap" or "Squeeze in [task] between meetings"
 
-Rules for suggesting times:
-- Look at the busy times list: {busy_times_text}
-- Look at occupied ranges: {occupied_ranges_text}
-- If 14:00 is busy, the entire 14:00-15:00 range is occupied - DON'T suggest it
-- If 16:00 is busy, the entire 16:00-17:00 range is occupied - DON'T suggest it
-- Only suggest times between 06:00-22:00 that have ZERO overlap with busy periods
-- If the day is mostly busy, suggest early morning (06:00-08:00) or late evening (20:00-22:00)
-- Suggest 2-3 completely free time blocks
-- Format: "Consider: [free time that doesn't appear in busy list] for [task]"
+5. Fun activity suggestion:
+   IF FREE SLOTS AVAILABLE after 14:00:
+   - Suggest a specific activity WITH a free time slot (e.g., "At 17:00, play Ghost of Tsushima for 60 minutes")
+   - Make sure the time doesn't overlap with busy times
+   
+   IF NO FREE SLOTS after 14:00:
+   - Just suggest the activity without a specific time (e.g., "When you get a break, play Ghost of Tsushima to unwind")
 
-5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day (after 14:00 AND not overlapping with busy times). Make it specific and engaging (1-2 sentences).
-
-ABSOLUTE RULE FOR POINT 4: Every time you want to suggest MUST be cross-checked against the busy times list. If there's ANY overlap, find a different time. This is non-negotiable.
-
-Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
+CRITICAL RULES:
+- NO brackets like [GRATITUDE INSIGHT] anywhere in your response
+- For points 4 and 5: ONLY suggest specific times if they are genuinely free
+- If suggesting times, they MUST NOT overlap with: {busy_times_text}
+- Keep TOTAL response under 850 characters
+- Be warm, direct, and actionable"""
 
         try:
             print("  🤖 Calling GPT...")
@@ -544,15 +553,15 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         except Exception as e:
             print(f"  ❌ GPT error: {e}")
             # Fallback response
-            fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+            fallback = f"""1. You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
 
-2. Weekly Focus: Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
+2. Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
 
-3. Strategic Action: Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
+3. Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
 
-4. Time Blocks: Early morning (06:30-08:00) or late evening (20:00-21:30) work best. Check your calendar and find genuinely vacant slots between events.
+4. {"Find free windows between your meetings to work on these tasks." if len(busy_times) > 10 else "Early morning (06:30-08:00) or evening (20:00-21:30) work well for focused tasks."}
 
-5. Afternoon Fun: During a free window after 14:00, enjoy a creative break with music, sketching, or a refreshing walk."""
+5. {"When you get a free moment, enjoy a creative break with music or a short walk." if len(busy_times) > 10 else "After 16:00, take a break with gaming or reading to recharge."}"""
             
             return fallback
 
@@ -586,7 +595,9 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         current_datetime = self.get_current_ist_time()
         
         # Create header and content
-        header_content = f"🌅 Daily Insight - {current_datetime}\n\n"
+        header_content = f"🌅 Daily Insight - {current_datetime}
+
+"
         
         # Combine header and briefing content
         full_content = header_content + briefing_content
@@ -654,7 +665,8 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         """Main execution"""
         print(f"🌅 Daily Insight Generator (5-Part Format)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
-        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay
+")
         
         print("📅 Getting calendar events...")
         calendar_events = self.get_calendar_events_today()
@@ -672,12 +684,14 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         journal_entries = self.get_recent_journal_entries_with_page_content()
         print(f"  ✅ Analyzed {len(journal_entries)} journal entries")
         
-        print("\n🧠 Generating 5-part daily insight...")
+        print("
+🧠 Generating 5-part daily insight...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
         print(f"  📊 Generated insight: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
-        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
+        print(f"
+✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
