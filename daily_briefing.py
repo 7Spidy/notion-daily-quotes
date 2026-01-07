@@ -322,8 +322,7 @@ class StrategicDailyBriefing:
             except Exception as e:
                 print(f"  ⚠️ Error parsing block {block_type}: {e}")
         
-        full_content = '
-'.join(content_parts)
+        full_content = '\n'.join(content_parts)
         return full_content[:800] if full_content else "No content found"
 
     def _query_recent_journal_entries_with_page_content(self):
@@ -428,7 +427,7 @@ class StrategicDailyBriefing:
         import re
         
         # Remove control characters and non-printable characters
-        content = re.sub(r'[-\b\u000B\f\u000E-\u001F-]', '', content)
+        content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
         
         # Replace problematic unicode characters
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
@@ -458,31 +457,10 @@ class StrategicDailyBriefing:
         
         journal_text = ' | '.join(journal_summaries)
         
-        # Prepare calendar events with clear time ranges
+        # Prepare calendar events
         calendar_text = []
-        busy_times = []
-        occupied_ranges = []
-        
         for event in calendar_events:
-            time_slot = event['time']
-            summary = event['summary']
-            calendar_text.append(f"{time_slot}: {summary}")
-            
-            # Track occupied times with ranges
-            if time_slot != 'N/A' and time_slot != 'All day':
-                busy_times.append(time_slot)
-                # Parse time to create hour ranges (e.g., 14:00 means 14:00-15:00 is busy)
-                try:
-                    hour = int(time_slot.split(':')[0])
-                    occupied_ranges.append(f"{hour:02d}:00-{hour+1:02d}:00")
-                except:
-                    pass
-        
-        busy_times_text = ', '.join(busy_times) if busy_times else 'None'
-        occupied_ranges_text = ', '.join(occupied_ranges) if occupied_ranges else 'None'
-        
-        # Determine if there are free slots available
-        has_free_slots = len(busy_times) < 12  # If less than 12 hours are occupied, there are free slots
+            calendar_text.append(f"{event['time']}: {event['summary']}")
         
         prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
@@ -490,50 +468,23 @@ DATA:
 - WEEKLY TASKS: {'; '.join(checklist_items[:5])}
 - STRATEGIC GOALS: {'; '.join(strategic_goals[:3])}
 - RECENT JOURNAL ENTRIES: {journal_text}
-- TODAY'S CALENDAR EVENTS: {'; '.join(calendar_text)}
+- TODAY'S CALENDAR: {'; '.join(calendar_text)}
 
-⚠️ OCCUPIED TIME SLOTS (DO NOT SUGGEST THESE):
-Specific busy times: {busy_times_text}
-Occupied hour ranges: {occupied_ranges_text}
+Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
 
-FREE SLOTS AVAILABLE: {"Yes - suggest specific times" if has_free_slots else "No - day is packed, give suggestions without times"}
+Format your response EXACTLY as follows (number each point):
 
-Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief and warm.
+1. [GRATITUDE INSIGHT] Review their recent journal entries and calendar events. Find something unique or meaningful. Give a thoughtful, grateful insight (2-3 sentences max).
 
-Format your response EXACTLY as follows:
+2. [WEEKLY TASK SUGGESTION] From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences).
 
-1. Review their recent journal entries and calendar events. Find something meaningful to be grateful for. Give a thoughtful insight (2-3 sentences max). DO NOT use brackets or labels like [GRATITUDE INSIGHT].
+3. [STRATEGIC TASK SUGGESTION] From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
 
-2. From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences). NO brackets or labels.
+4. [CALENDAR TIME SLOTS] Look at the calendar events and identify 2-3 vacant time blocks suitable for working on tasks from points 2 and 3. Format as "Consider: [time] for [task type]" (2-3 suggestions max).
 
-3. From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences). NO brackets or labels.
+5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day. Make it specific and engaging (1-2 sentences).
 
-4. Time slot suggestions:
-   IF FREE SLOTS ARE AVAILABLE ({has_free_slots}):
-   - Check the busy times: {busy_times_text}
-   - Check occupied ranges: {occupied_ranges_text}
-   - Suggest 2-3 specific FREE time blocks between 06:00-22:00 that don't overlap with busy times
-   - Format: "Consider: [specific free time] for [task from point 2 or 3]"
-   - DO NOT suggest any time that appears in the busy list above
-   
-   IF NO FREE SLOTS (day is packed):
-   - Just give task suggestions without specific times
-   - Say something like "Focus on [task] when you find a gap" or "Squeeze in [task] between meetings"
-
-5. Fun activity suggestion:
-   IF FREE SLOTS AVAILABLE after 14:00:
-   - Suggest a specific activity WITH a free time slot (e.g., "At 17:00, play Ghost of Tsushima for 60 minutes")
-   - Make sure the time doesn't overlap with busy times
-   
-   IF NO FREE SLOTS after 14:00:
-   - Just suggest the activity without a specific time (e.g., "When you get a break, play Ghost of Tsushima to unwind")
-
-CRITICAL RULES:
-- NO brackets like [GRATITUDE INSIGHT] anywhere in your response
-- For points 4 and 5: ONLY suggest specific times if they are genuinely free
-- If suggesting times, they MUST NOT overlap with: {busy_times_text}
-- Keep TOTAL response under 850 characters
-- Be warm, direct, and actionable"""
+Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
 
         try:
             print("  🤖 Calling GPT...")
@@ -553,15 +504,15 @@ CRITICAL RULES:
         except Exception as e:
             print(f"  ❌ GPT error: {e}")
             # Fallback response
-            fallback = f"""1. You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+            fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
 
-2. Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
+2. Weekly Focus: Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
 
-3. Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
+3. Strategic Action: Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
 
-4. {"Find free windows between your meetings to work on these tasks." if len(busy_times) > 10 else "Early morning (06:30-08:00) or evening (20:00-21:30) work well for focused tasks."}
+4. Time Blocks: Check your calendar for open slots - morning or late afternoon work well for focused tasks.
 
-5. {"When you get a free moment, enjoy a creative break with music or a short walk." if len(busy_times) > 10 else "After 16:00, take a break with gaming or reading to recharge."}"""
+5. Afternoon Fun: Take a creative break - try sketching, listening to music, or a short nature walk."""
             
             return fallback
 
@@ -595,9 +546,7 @@ CRITICAL RULES:
         current_datetime = self.get_current_ist_time()
         
         # Create header and content
-        header_content = f"🌅 Daily Insight - {current_datetime}
-
-"
+        header_content = f"🌅 Daily Insight - {current_datetime}\n\n"
         
         # Combine header and briefing content
         full_content = header_content + briefing_content
@@ -665,8 +614,7 @@ CRITICAL RULES:
         """Main execution"""
         print(f"🌅 Daily Insight Generator (5-Part Format)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
-        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay
-")
+        print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
         print("📅 Getting calendar events...")
         calendar_events = self.get_calendar_events_today()
@@ -684,14 +632,12 @@ CRITICAL RULES:
         journal_entries = self.get_recent_journal_entries_with_page_content()
         print(f"  ✅ Analyzed {len(journal_entries)} journal entries")
         
-        print("
-🧠 Generating 5-part daily insight...")
+        print("\n🧠 Generating 5-part daily insight...")
         briefing = self.generate_strategic_briefing(checklist_items, strategic_goals, journal_entries, calendar_events)
         print(f"  📊 Generated insight: {len(briefing)} characters")
         
         self.update_daily_briefing_section(briefing)
-        print(f"
-✅ Process completed at: {self.get_current_ist_time()}")
+        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
 
 if __name__ == "__main__":
     briefing = StrategicDailyBriefing()
