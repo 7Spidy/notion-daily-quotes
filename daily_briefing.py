@@ -444,6 +444,18 @@ class StrategicDailyBriefing:
         
         return content
 
+    def has_vacant_time_slots(self, calendar_events):
+        """Check if there are vacant time slots in the calendar"""
+        # If no events or only placeholder events, we have vacant time
+        if not calendar_events or calendar_events[0]['time'] == 'N/A':
+            return True
+        
+        # Count actual scheduled events (excluding all-day events)
+        scheduled_events = [e for e in calendar_events if e['time'] != 'All day' and e['time'] != 'N/A']
+        
+        # If less than 6 events, there are likely vacant slots
+        return len(scheduled_events) < 6
+
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
         """Generate 5-part daily insight using GPT"""
         current_datetime = self.get_current_ist_time()
@@ -462,6 +474,9 @@ class StrategicDailyBriefing:
         for event in calendar_events:
             calendar_text.append(f"{event['time']}: {event['summary']}")
         
+        # Check for vacant time slots
+        has_vacant_slots = self.has_vacant_time_slots(calendar_events)
+        
         prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
 
 DATA:
@@ -469,20 +484,21 @@ DATA:
 - STRATEGIC GOALS: {'; '.join(strategic_goals[:3])}
 - RECENT JOURNAL ENTRIES: {journal_text}
 - TODAY'S CALENDAR: {'; '.join(calendar_text)}
+- VACANT TIME SLOTS AVAILABLE: {"Yes" if has_vacant_slots else "No"}
 
 Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
 
-Format your response EXACTLY as follows (number each point):
+Format your response EXACTLY as follows (number each point, NO headings in brackets):
 
-1. [GRATITUDE INSIGHT] Review their recent journal entries and calendar events. Find something unique or meaningful. Give a thoughtful, grateful insight (2-3 sentences max).
+1. Review their recent journal entries and calendar events. Find something unique or meaningful. Give a thoughtful, grateful insight (2-3 sentences max).
 
-2. [WEEKLY TASK SUGGESTION] From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences).
+2. From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences).
 
-3. [STRATEGIC TASK SUGGESTION] From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
+3. From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
 
-4. [CALENDAR TIME SLOTS] Look at the calendar events and identify 2-3 vacant time blocks suitable for working on tasks from points 2 and 3. Format as "Consider: [time] for [task type]" (2-3 suggestions max).
+4. {"Look at the calendar events and identify 2-3 vacant time blocks suitable for working on tasks. Format as 'Consider: [time] for [task type]' (2-3 suggestions max)." if has_vacant_slots else "Since the calendar is busy today, suggest 2-3 task types that could be tackled in short breaks or flexible moments. Do NOT mention specific times. Just suggest the activities."}
 
-5. [FUN AFTERNOON ACTIVITY] Suggest ONE fun, relaxing activity for the second half of the day. Make it specific and engaging (1-2 sentences).
+5. {"Suggest ONE fun, relaxing activity for a vacant time slot in the second half of the day. Include the specific time if there's a clear opening. Format as '[time]: [activity]' or just '[activity]' if no clear slot." if has_vacant_slots else "Suggest ONE fun, relaxing activity that can fit flexibly into the second half of the day between commitments. Do NOT mention specific times. Just suggest the activity."}
 
 Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
 
@@ -504,15 +520,15 @@ Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
         except Exception as e:
             print(f"  ❌ GPT error: {e}")
             # Fallback response
-            fallback = f"""1. Gratitude: You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+            fallback = f"""1. You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
 
-2. Weekly Focus: Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
+2. Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
 
-3. Strategic Action: Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
+3. Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
 
-4. Time Blocks: Check your calendar for open slots - morning or late afternoon work well for focused tasks.
+4. {"Check your calendar for open slots - morning or late afternoon work well for focused tasks." if has_vacant_slots else "Quick task review during breaks can maintain progress despite a busy schedule."}
 
-5. Afternoon Fun: Take a creative break - try sketching, listening to music, or a short nature walk."""
+5. {"Take a creative break - try sketching, listening to music, or a short nature walk." if has_vacant_slots else "Find moments for a quick creative break between commitments."}"""
             
             return fallback
 
