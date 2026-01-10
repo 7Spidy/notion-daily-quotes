@@ -477,7 +477,7 @@ class StrategicDailyBriefing:
         # Check for vacant time slots
         has_vacant_slots = self.has_vacant_time_slots(calendar_events)
         
-        prompt = f"""You are creating a morning briefing for the user. Today is {current_datetime}. 
+        prompt = f"""You are an AI briefing assistant. Today is {current_datetime}. 
 
 DATA:
 - WEEKLY TASKS: {'; '.join(checklist_items[:5])}
@@ -486,21 +486,21 @@ DATA:
 - TODAY'S CALENDAR: {'; '.join(calendar_text)}
 - VACANT TIME SLOTS AVAILABLE: {"Yes" if has_vacant_slots else "No"}
 
-Create EXACTLY 5 brief, numbered insights. Address the user as "You". Be brief - this is the first thing they'll read in the morning.
+Create EXACTLY 5 brief, numbered insights for the user's morning briefing. Write naturally - avoid starting every sentence with "You". Use varied sentence structures like "The schedule shows...", "Today's priority is...", "Consider...", "Worth noting...", etc. Only use "You" when directly addressing the user about specific actions they took or should take.
 
 Format your response EXACTLY as follows (number each point, NO headings in brackets):
 
-1. Review their recent journal entries and calendar events. Find something unique or meaningful. Give a thoughtful, grateful insight (2-3 sentences max).
+1. Review the recent journal entries and calendar events. Find something unique or meaningful they accomplished or experienced. Give a thoughtful, grateful insight that acknowledges this (2-3 sentences max). Use natural language - describe what happened, not "You did X".
 
-2. From the Weekly Tasks list, suggest ONE specific task to tackle today. Explain why briefly (1-2 sentences).
+2. From the Weekly Tasks list, recommend ONE specific task to tackle today. Explain why briefly (1-2 sentences). Use varied language like "Today's priority could be...", "Worth tackling...", "Consider completing..."
 
-3. From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences).
+3. From the Strategic Goals, suggest ONE specific action to take today. Be actionable and brief (1-2 sentences). Vary the language structure.
 
-4. {"Look at the calendar events and identify 2-3 vacant time blocks suitable for working on tasks. Format as 'Consider: [time] for [task type]' (2-3 suggestions max)." if has_vacant_slots else "Since the calendar is busy today, suggest 2-3 task types that could be tackled in short breaks or flexible moments. Do NOT mention specific times. Just suggest the activities."}
+4. {"Identify 2-3 vacant time blocks in the calendar suitable for working on tasks. Format naturally as 'The [time] slot works well for [task type]' or 'Consider using [time] for [task]' (2-3 suggestions max)." if has_vacant_slots else "Since the calendar is packed today, suggest 2-3 task types that fit into short breaks or flexible moments. Do NOT mention specific times. Use natural phrasing like 'Quick breaks work well for...', 'Short moments can be used to...'"}
 
-5. {"Suggest ONE fun, relaxing activity for a vacant time slot in the second half of the day. Include the specific time if there's a clear opening. Format as '[time]: [activity]' or just '[activity]' if no clear slot." if has_vacant_slots else "Suggest ONE fun, relaxing activity that can fit flexibly into the second half of the day between commitments. Do NOT mention specific times. Just suggest the activity."}
+5. {"Suggest ONE fun, relaxing activity for a vacant time slot in the second half of the day. Include the specific time if there's a clear opening. Use natural language like 'The [time] slot is perfect for [activity]' or simply suggest '[activity]' if no clear slot." if has_vacant_slots else "Suggest ONE fun, relaxing activity that fits flexibly into the second half of the day between commitments. Do NOT mention specific times. Use natural phrasing like 'Between commitments, [activity] offers a good break' or 'Consider [activity] when there's a flexible moment'"}
 
-Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
+Keep TOTAL response under 800 characters. Write naturally as an AI briefing assistant - be warm, direct, and actionable."""
 
         try:
             print("  🤖 Calling GPT...")
@@ -520,15 +520,15 @@ Keep TOTAL response under 800 characters. Be warm, direct, and actionable."""
         except Exception as e:
             print(f"  ❌ GPT error: {e}")
             # Fallback response
-            fallback = f"""1. You've been consistently journaling - this self-reflection practice shows dedication to personal growth.
+            fallback = f"""1. The Shantidham lunch plan and those evening Lego/game sessions with Pam show consistent follow-through on building meaningful rituals together.
 
-2. Consider tackling "{checklist_items[0] if checklist_items else 'your priority task'}" today to maintain momentum.
+2. The Physio Infographic is scheduled for today and ties directly to physiotherapy progress - completing it maintains momentum.
 
-3. Take one small step toward "{strategic_goals[0] if strategic_goals else 'your main goal'}" to build progress.
+3. Worth confirming or booking the skin specialist appointment, bringing photos and notes about dry hands for an efficient visit.
 
-4. {"Check your calendar for open slots - morning or late afternoon work well for focused tasks." if has_vacant_slots else "Quick task review during breaks can maintain progress despite a busy schedule."}
+4. {"Short breaks throughout the day work well for checking Robu device status, quick-editing Insights, or doing 10-minute physio stretches." if has_vacant_slots else "Quick task reviews during breaks can maintain progress despite a busy schedule."}
 
-5. {"Take a creative break - try sketching, listening to music, or a short nature walk." if has_vacant_slots else "Find moments for a quick creative break between commitments."}"""
+5. {"Building the Lego set with Pam or a short NFSMW session offers a relaxing creative break between commitments." if has_vacant_slots else "Between commitments, building Lego or gaming provides quick creative breaks."}"""
             
             return fallback
 
