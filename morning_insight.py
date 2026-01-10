@@ -237,15 +237,18 @@ class MorningInsightGenerator:
         else:  # Sunday
             day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals'
         
-        prompt = f"""Generate a brief 3-part morning insight. Be concise and profound. MAX 100 words total.
+        # Build the prompt based on whether special events exist
+        if special_events:
+            prompt = f"""Generate a brief 3-part morning insight. Be concise and profound. MAX 100 words total.
 
 Today is {day_of_week}, Day {day_of_year} of {current_year}.
+Today's special event(s): {special_events}
 
 **PART 1 - Stoic Time Reminder (1 sentence):**
 Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
 
-**PART 2 - Special Event (ONLY if applicable):**
-{f"Today is special: {special_events}. Write 1 warm, culturally appropriate sentence acknowledging it." if special_events else "Skip this part entirely. Do NOT generate any messages."}
+**PART 2 - Special Event Acknowledgment (1 sentence):**
+Today is special: {special_events}. Write 1 warm, culturally appropriate sentence acknowledging this event.
 
 **PART 3 - Personal Journal Prompt:**
 Create a deeply personal, introspective journaling prompt inspired by 2026 journal prompts. The prompt should:
@@ -257,7 +260,28 @@ Create a deeply personal, introspective journaling prompt inspired by 2026 journ
 - Start with "📝 Journal Prompt:"
 - Keep it under 30 words
 
-Format: Two or three distinct parts (depending on whether there's a special event) separated by blank lines. No labels except for "📝 Journal Prompt:". Just the content."""
+Format: Three distinct parts separated by blank lines. No section labels except for "📝 Journal Prompt:". Just the content."""
+        else:
+            prompt = f"""Generate a brief 2-part morning insight. Be concise and profound. MAX 80 words total.
+
+Today is {day_of_week}, Day {day_of_year} of {current_year}.
+There are NO special events today.
+
+**PART 1 - Stoic Time Reminder (1 sentence):**
+Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
+
+**PART 2 - Personal Journal Prompt:**
+Create a deeply personal, introspective journaling prompt inspired by 2026 journal prompts. The prompt should:
+- Be about personal growth, self-reflection, emotions, relationships, or life meaning
+- NOT be work-related at all
+- Encourage vulnerability and authentic self-exploration
+- Relate naturally to the day's energy ({day_of_week})
+- Be specific enough to guide deep reflection
+- Start with "📝 Journal Prompt:"
+- Keep it under 30 words
+
+Format: TWO parts ONLY separated by a blank line. No section labels except for "📝 Journal Prompt:". Just the content.
+CRITICAL: Do NOT include any birthday wishes, festival greetings, or event acknowledgments. There is NO special event today."""
 
         try:
             print("  🤖 Generating insight with GPT-5 mini...")
