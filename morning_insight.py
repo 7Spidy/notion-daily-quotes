@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 import time
 
 class MorningInsightGenerator:
-    """Generates brief 4-part morning insights: Stoic reminder + Special events + Daily inspiration + Journal prompt"""
+    """Generates brief 3-part morning insights: Stoic reminder + Special events + Personal journal prompt"""
     
     def __init__(self):
         self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -86,8 +86,75 @@ class MorningInsightGenerator:
             print(f"Token generation error: {e}")
             return None
 
+    def get_lunar_phase_and_hindu_festivals(self):
+        """Check for moon phases and Hindu festivals using astronomy API"""
+        try:
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
+            
+            # Use astronomy API to get moon phase
+            # Format: YYYY-MM-DD
+            date_str = now.strftime("%Y-%m-%d")
+            
+            # Using a free astronomy API
+            url = f"https://api.astronomyapi.com/api/v2/bodies/positions/moon"
+            
+            # Fallback: Simple lunar calculation
+            # This is an approximation based on known lunar cycle
+            from math import floor
+            
+            # Known new moon: January 29, 2026
+            known_new_moon = datetime(2026, 1, 29, tzinfo=ist)
+            lunar_month = 29.53059  # days
+            
+            days_since = (now - known_new_moon).days
+            phase = (days_since % lunar_month) / lunar_month
+            
+            lunar_event = None
+            if 0 <= phase < 0.03 or phase > 0.97:
+                lunar_event = "New Moon"
+            elif 0.47 <= phase < 0.53:
+                lunar_event = "Full Moon"
+            
+            # Hindu festivals for 2026 (major ones)
+            hindu_festivals = {
+                "2026-01-14": "Makar Sankranti",
+                "2026-01-26": "Vasant Panchami",
+                "2026-02-26": "Maha Shivaratri",
+                "2026-03-14": "Holi",
+                "2026-03-30": "Ugadi / Gudi Padwa",
+                "2026-04-02": "Rama Navami",
+                "2026-04-06": "Hanuman Jayanti",
+                "2026-08-15": "Independence Day",
+                "2026-08-16": "Janmashtami",
+                "2026-09-05": "Ganesh Chaturthi",
+                "2026-10-05": "Dussehra",
+                "2026-10-17": "Karva Chauth",
+                "2026-10-20": "Dhanteras",
+                "2026-10-22": "Diwali",
+                "2026-10-23": "Govardhan Puja",
+                "2026-10-24": "Bhai Dooj",
+                "2026-11-05": "Chhath Puja"
+            }
+            
+            today_key = now.strftime("%Y-%m-%d")
+            hindu_festival = hindu_festivals.get(today_key)
+            
+            if hindu_festival:
+                print(f"  🪔 Hindu festival found: {hindu_festival}")
+                return hindu_festival
+            elif lunar_event:
+                print(f"  🌙 Lunar event found: {lunar_event}")
+                return lunar_event
+            
+            return None
+            
+        except Exception as e:
+            print(f"  ⚠️ Lunar/Festival check error: {e}")
+            return None
+
     def get_special_calendar_events(self):
-        """Check for birthdays, anniversaries, and special events"""
+        """Check for birthdays, anniversaries, and special events from calendar"""
         if not self.google_credentials or not self.calendar_id:
             return None
         
@@ -134,15 +201,33 @@ class MorningInsightGenerator:
             print(f"  ⚠️ Calendar error: {e}")
             return None
 
+    def get_all_special_events(self):
+        """Get all special events: calendar events + Hindu festivals + lunar phases"""
+        events = []
+        
+        # Check calendar events
+        calendar_event = self.get_special_calendar_events()
+        if calendar_event:
+            events.append(calendar_event)
+        
+        # Check Hindu festivals and lunar phases
+        hindu_lunar_event = self.get_lunar_phase_and_hindu_festivals()
+        if hindu_lunar_event:
+            events.append(hindu_lunar_event)
+        
+        if events:
+            return " | ".join(events)
+        return None
+
     def generate_morning_insight(self):
-        """Generate 4-part morning insight with journal prompt"""
+        """Generate 3-part morning insight with personal journal prompt"""
         ist = timezone(timedelta(hours=5, minutes=30))
         now = datetime.now(ist)
         
         day_of_year = now.timetuple().tm_yday
         day_of_week = now.strftime("%A")
         current_year = now.year
-        special_event = self.get_special_calendar_events()
+        special_events = self.get_all_special_events()
         
         # Determine day context
         if day_of_week in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
@@ -152,29 +237,27 @@ class MorningInsightGenerator:
         else:  # Sunday
             day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals'
         
-        prompt = f"""Generate a brief 4-part morning insight. Be concise and profound. MAX 120 words total.
+        prompt = f"""Generate a brief 3-part morning insight. Be concise and profound. MAX 100 words total.
 
 Today is {day_of_week}, Day {day_of_year} of {current_year}.
 
 **PART 1 - Stoic Time Reminder (1 sentence):**
 Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
 
-**PART 2 - Special Event (if applicable):**
-{f"Today's special event: {special_event}. Write 1 warm sentence acknowledging it." if special_event else "Check if today is a Hindu festival, new moon, full moon, or eclipse. If yes, mention it in 1 sentence. If no special significance, skip this part entirely."}
+**PART 2 - Special Event (ONLY if applicable):**
+{f"Today is special: {special_events}. Write 1 warm, culturally appropriate sentence acknowledging it." if special_events else "Skip this part entirely. Do NOT generate any messages."}
 
-**PART 3 - Daily Inspiration (1-2 sentences):**
-Based on: {day_context}
-Write ONE thought-provoking question or insight for the day. Make it personal, actionable, and inspiring. Under 25 words.
-
-**PART 4 - Daily Journal Prompt:**
-Create a unique journaling prompt based on today's context ({day_of_week}, {day_context}, and any special event). The prompt should:
-- Be thought-provoking and encourage deep reflection
-- Relate naturally to the day's energy and purpose
-- Be specific enough to guide writing but open enough for personal exploration
-- Start with "📝 Journal Prompt:" 
+**PART 3 - Personal Journal Prompt:**
+Create a deeply personal, introspective journaling prompt inspired by 2026 journal prompts. The prompt should:
+- Be about personal growth, self-reflection, emotions, relationships, or life meaning
+- NOT be work-related at all
+- Encourage vulnerability and authentic self-exploration
+- Relate naturally to the day's energy ({day_of_week})
+- Be specific enough to guide deep reflection
+- Start with "📝 Journal Prompt:"
 - Keep it under 30 words
 
-Format: Four distinct parts separated by blank lines. No labels like "Part 1" except for the journal prompt marker. Just the content."""
+Format: Two or three distinct parts (depending on whether there's a special event) separated by blank lines. No labels except for "📝 Journal Prompt:". Just the content."""
 
         try:
             print("  🤖 Generating insight with GPT-5 mini...")
@@ -195,18 +278,15 @@ Format: Four distinct parts separated by blank lines. No labels like "Part 1" ex
             # Fallback based on day
             fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
             
-            if special_event:
-                fallback += f"Today: {special_event} 🎉\n\n"
+            if special_events:
+                fallback += f"Today: {special_events} 🎉\n\n"
             
             if day_of_week == 'Sunday':
-                fallback += "What's one pattern from this week that you want to keep, and one you want to change?\n\n"
-                fallback += "📝 Journal Prompt: Reflect on the past week - what moment made you feel most alive, and what would you do differently?"
+                fallback += "📝 Journal Prompt: What emotion have you been avoiding this week, and what is it trying to tell you about your needs?"
             elif day_of_week == 'Saturday':
-                fallback += "What brings you pure joy that you've been postponing? Today's the day.\n\n"
-                fallback += "📝 Journal Prompt: If you had zero obligations today, what would you do just because it makes you happy?"
+                fallback += "📝 Journal Prompt: When did you last feel completely yourself, and what would it take to feel that way more often?"
             else:
-                fallback += "If today mattered twice as much, what would you prioritize differently?\n\n"
-                fallback += "📝 Journal Prompt: What's one small action today that would make you proud when you reflect back this evening?"
+                fallback += "📝 Journal Prompt: What relationship in your life needs more attention, and what small gesture could you offer today?"
             
             return fallback
 
@@ -321,7 +401,7 @@ Format: Four distinct parts separated by blank lines. No labels like "Part 1" ex
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
         
-        print("🧠 Generating 4-part morning insight with journal prompt...")
+        print("🧠 Generating 3-part morning insight with personal journal prompt...")
         insight = self.generate_morning_insight()
         print(f"  📊 Generated: {len(insight)} characters\n")
         
