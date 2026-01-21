@@ -70,12 +70,16 @@ Today is {day_of_week}, Day {day_of_year} of {current_year}.
 Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
 
 **PART 2 - Personal Journal Prompt:**
-Create a deeply personal, introspective journaling prompt inspired by 2026 journal prompts. The prompt should:
-- Be about personal growth, self-reflection, emotions, relationships, or life meaning
+Create a deeply personal, uplifting journaling prompt inspired by positive psychology and 2026 journal prompts. The prompt should:
+- Focus on POSITIVE emotions (joy, gratitude, fulfillment, peace, excitement, love, contentment)
+- Explore what brings meaning, happiness, and growth
+- Celebrate strengths, progress, or aspirations
+- Be about personal growth, relationships, or life meaning in a POSITIVE light
 - NOT be work-related at all
-- Encourage vulnerability and authentic self-exploration
+- NOT focus on negative emotions, fears, or things avoided
+- Encourage appreciation, hope, and authentic joy
 - Relate naturally to the day's energy ({day_of_week})
-- Be specific enough to guide deep reflection
+- Be specific enough to guide meaningful reflection
 - Start with "📝 Journal Prompt:"
 - Keep it under 30 words
 
@@ -101,11 +105,11 @@ Format: TWO parts ONLY separated by a blank line. No section labels except for "
             fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
             
             if day_of_week == 'Sunday':
-                fallback += "📝 Journal Prompt: What emotion have you been avoiding this week, and what is it trying to tell you about your needs?"
+                fallback += "📝 Journal Prompt: What moment this week filled you with genuine joy, and how can you create more of that feeling?"
             elif day_of_week == 'Saturday':
-                fallback += "📝 Journal Prompt: When did you last feel completely yourself, and what would it take to feel that way more often?"
+                fallback += "📝 Journal Prompt: What activity makes you feel most alive and authentically yourself, and when will you do it next?"
             else:
-                fallback += "📝 Journal Prompt: What relationship in your life needs more attention, and what small gesture could you offer today?"
+                fallback += "📝 Journal Prompt: What relationship in your life brings you the most gratitude, and how can you celebrate that connection today?"
             
             return fallback
 
