@@ -505,7 +505,7 @@ Keep TOTAL response under 800 characters. Write naturally as an AI briefing assi
             print("  🤖 Calling Claude 4.6 Sonnet...")
             
             response = self.anthropic_client.messages.create(
-                model="claude-4.6-sonnet",
+                model="claude-sonnet-4-6",
                 max_tokens=800,
                 messages=[
                     {
