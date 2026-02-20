@@ -87,7 +87,7 @@ Format: TWO parts ONLY separated by a blank line. No section labels except for "
         try:
             print("  🤖 Generating insight with Claude 4.6 Sonnet...")
             response = self.anthropic_client.messages.create(
-                model="claude-4.6-sonnet",
+                model="claude-sonnet-4-6",
                 max_tokens=200,
                 messages=[
                     {
