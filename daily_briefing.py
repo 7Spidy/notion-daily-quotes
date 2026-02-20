@@ -1,4 +1,4 @@
-import openai
+from anthropic import Anthropic
 import requests
 import json
 import os
@@ -8,7 +8,7 @@ import time
 
 class StrategicDailyBriefing:
     def __init__(self):
-        self.openai_client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        self.anthropic_client = Anthropic()
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
         
@@ -457,7 +457,7 @@ class StrategicDailyBriefing:
         return len(scheduled_events) < 6
 
     def generate_strategic_briefing(self, checklist_items, strategic_goals, journal_entries, calendar_events):
-        """Generate 5-part daily insight using GPT"""
+        """Generate 5-part daily insight using Claude"""
         current_datetime = self.get_current_ist_time()
         
         # Prepare journal content
@@ -501,24 +501,29 @@ Format your response EXACTLY as follows (number each point, NO headings in brack
 5. {"Suggest ONE fun, relaxing activity for a vacant time slot in the second half of the day. Include the specific time if there's a clear opening. Use natural language like 'The [time] slot is perfect for [activity]' or simply suggest '[activity]' if no clear slot." if has_vacant_slots else "Suggest ONE fun, relaxing activity that fits flexibly into the second half of the day between commitments. Do NOT mention specific times. Use natural phrasing like 'Between commitments, [activity] offers a good break' or 'Consider [activity] when there's a flexible moment'"}
 
 Keep TOTAL response under 800 characters. Write naturally as an AI briefing assistant - be warm, direct, and actionable."""
-
         try:
-            print("  🤖 Calling GPT...")
+            print("  🤖 Calling Claude 4.6 Sonnet...")
             
-            response = self.openai_client.responses.create(
-                model="gpt-5-mini",
-                input=prompt,
-                reasoning={"effort": "medium"},
-                text={"verbosity": "low"}
+            response = self.anthropic_client.messages.create(
+                model="claude-4.6-sonnet",
+                max_tokens=800,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
             )
             
-            insights = response.output_text.strip()
+            insights = "".join(
+                block.text for block in response.content if getattr(block, "type", None) == "text"
+            ).strip()
             
             print("  ✅ Daily insight generated")
             return insights
             
         except Exception as e:
-            print(f"  ❌ GPT error: {e}")
+            print(f"  ❌ Claude error: {e}")
             # Fallback response
             fallback = f"""1. The Shantidham lunch plan and those evening Lego/game sessions with Pam show consistent follow-through on building meaningful rituals together.
 
