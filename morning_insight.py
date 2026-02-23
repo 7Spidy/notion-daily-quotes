@@ -11,17 +11,17 @@ import time
 
 # Google Calendar colorId → (emoji, category label)
 CALENDAR_COLOR_MAP = {
-    "11": ("🔴", "Fun/Play"),   # Tomato
-    "4":  ("🔴", "Fun/Play"),   # Flamingo
-    "6":  ("🔴", "Fun/Play"),   # Tangerine
-    "9":  ("🔵", "Office"),     # Blueberry
-    "1":  ("🔵", "Office"),     # Lavender
-    "7":  ("🔵", "Office"),     # Peacock
-    "3":  ("🔵", "Office"),     # Grape
-    "10": ("🟢", "Health"),     # Basil
-    "2":  ("🟢", "Health"),     # Sage
-    "5":  ("🟡", "Chores"),     # Banana
-    "8":  ("🟡", "Chores"),     # Graphite
+    "11": ("🔴", "Fun/Play"),
+    "4":  ("🔴", "Fun/Play"),
+    "6":  ("🔴", "Fun/Play"),
+    "9":  ("🔵", "Office"),
+    "1":  ("🔵", "Office"),
+    "7":  ("🔵", "Office"),
+    "3":  ("🔵", "Office"),
+    "10": ("🟢", "Health"),
+    "2":  ("🟢", "Health"),
+    "5":  ("🟡", "Chores"),
+    "8":  ("🟡", "Chores"),
 }
 
 
@@ -41,6 +41,10 @@ class MorningInsightGenerator:
         self.weekly_checklist_db_id = os.getenv('WEEKLY_CHECKLIST_DB_ID')
         self.strategic_goals_db_id = os.getenv('STRATEGIC_GOALS_DB_ID')
         self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
+
+        # AI Agent long-term memory and instructions
+        self.agent_instructions_page_id = os.getenv('AGENT_INSTRUCTIONS_PAGE_ID')
+        self.agent_memory_db_id = os.getenv('AGENT_MEMORY_DB_ID')
 
         self.max_retries = 3
         self.retry_delay = 3
@@ -147,6 +151,85 @@ class MorningInsightGenerator:
             print(f"  Calendar error: {e}")
             return [{"time": "N/A", "summary": "Calendar temporarily unavailable", "category": "⚪ Other"}]
 
+    # ─── AI Agent Instructions & Memory ──────────────────────────────────────
+
+    def get_agent_instructions(self):
+        """Fetch AI agent instructions from Notion page (AGENT_INSTRUCTIONS_PAGE_ID)."""
+        if not self.agent_instructions_page_id:
+            print("  ⚠️ AGENT_INSTRUCTIONS_PAGE_ID not set — skipping")
+            return ""
+        try:
+            print("📖 Reading AI Instructions page...")
+            content = self._get_page_content(self.agent_instructions_page_id)
+            print(f"  ✅ AI Instructions loaded: {len(content)} chars")
+            return content
+        except Exception as e:
+            print(f"  ⚠️ Could not load AI Instructions: {e}")
+            return ""
+
+    def _query_agent_memories(self):
+        """Query recent entries from Agent Memory DB."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.agent_memory_db_id}/query",
+            headers=headers,
+            json={
+                "sorts": [{"property": "Created time", "direction": "descending"}],
+                "page_size": 20
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        memories = []
+        for entry in r.json().get('results', []):
+            try:
+                props = entry.get('properties', {})
+                content = ''
+                # Try common title/content property names
+                for key in ['Memory', 'Name', 'Content', 'Observation', 'Note', 'Title']:
+                    if key in props:
+                        prop = props[key]
+                        if prop.get('title') and prop['title']:
+                            content = prop['title'][0]['plain_text']
+                            break
+                        elif prop.get('rich_text') and prop['rich_text']:
+                            content = prop['rich_text'][0]['plain_text']
+                            break
+                # Fallback: scan all properties
+                if not content:
+                    for key, val in props.items():
+                        if val.get('rich_text') and val['rich_text']:
+                            content = val['rich_text'][0]['plain_text']
+                            break
+                        elif val.get('title') and val['title']:
+                            content = val['title'][0]['plain_text']
+                            break
+                if content.strip():
+                    memories.append(content.strip())
+            except Exception:
+                pass
+        return memories
+
+    def get_agent_memories(self):
+        """Fetch recent agent memory entries from Notion DB (AGENT_MEMORY_DB_ID)."""
+        if not self.agent_memory_db_id:
+            print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping")
+            return []
+        try:
+            print("🧠 Reading Agent Memory DB...")
+            memories = self.notion_retry(self._query_agent_memories)
+            print(f"  ✅ Loaded {len(memories)} memory entries")
+            return memories
+        except Exception as e:
+            print(f"  ⚠️ Could not load Agent Memory: {e}")
+            return []
+
     # ─── Notion Data Fetches ──────────────────────────────────────────────────
 
     def _query_weekly_checklist(self):
@@ -176,7 +259,6 @@ class MorningInsightGenerator:
 
     def get_weekly_checklist_items(self):
         try:
-            print("📋 Getting weekly checklist...")
             items = self.notion_retry(self._query_weekly_checklist)
             print(f"  Found {len(items)} unchecked items")
             return items
@@ -185,19 +267,39 @@ class MorningInsightGenerator:
             return ["Weekly planning review"]
 
     def _query_strategic_goals(self):
+        """
+        Fetch:
+          - All goals with Status = 'In progress'
+          - Goals with Status = 'Done' AND last_edited_time within the last 7 days
+        This prevents stale Done goals from appearing in the briefing.
+        """
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
+        ist = timezone(timedelta(hours=5, minutes=30))
+        seven_days_ago = (datetime.now(ist) - timedelta(days=7)).strftime("%Y-%m-%dT00:00:00+05:30")
+
         r = requests.post(
             f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query",
             headers=headers,
             json={
                 "filter": {
                     "or": [
-                        {"property": "Status", "status": {"equals": "In progress"}},
-                        {"property": "Status", "status": {"equals": "Done"}}
+                        {
+                            "property": "Status",
+                            "status": {"equals": "In progress"}
+                        },
+                        {
+                            "and": [
+                                {"property": "Status", "status": {"equals": "Done"}},
+                                {
+                                    "timestamp": "last_edited_time",
+                                    "last_edited_time": {"on_or_after": seven_days_ago}
+                                }
+                            ]
+                        }
                     ]
                 },
                 "page_size": 10
@@ -226,7 +328,6 @@ class MorningInsightGenerator:
 
     def get_strategic_goals(self):
         try:
-            print("🎯 Getting strategic goals (In Progress + Done)...")
             goals = self.notion_retry(self._query_strategic_goals)
             print(f"  Found {len(goals)} goals")
             return goals
@@ -312,7 +413,6 @@ class MorningInsightGenerator:
 
     def get_journal_entries(self):
         try:
-            print("📝 Getting journal entries (last 7 days)...")
             entries = self.notion_retry(self._query_journal_entries)
             print(f"  ✅ Loaded {len(entries)} entries")
             return entries
@@ -339,10 +439,7 @@ class MorningInsightGenerator:
         return None
 
     def get_block_comments(self, block_id):
-        """
-        Read user comments on a Notion block.
-        Requires 'Read comments' permission in your Notion integration settings.
-        """
+        """Read user comments on a Notion block."""
         if not block_id:
             return []
         try:
@@ -367,12 +464,16 @@ class MorningInsightGenerator:
 
     # ─── Part 1: Morning Insight (Stoic + Journal Prompt) ────────────────────
 
-    def generate_morning_insight(self, user_feedback=None):
+    def generate_morning_insight(self, ai_instructions="", memories=None, user_feedback=None):
         ist = timezone(timedelta(hours=5, minutes=30))
         now = datetime.now(ist)
         day_of_year = now.timetuple().tm_yday
         day_of_week = now.strftime("%A")
         current_year = now.year
+
+        memory_section = ""
+        if memories:
+            memory_section = f"\n\nAGENT MEMORY (long-term context): {'; '.join(memories[:10])}"
 
         feedback_section = ""
         if user_feedback:
@@ -383,12 +484,16 @@ class MorningInsightGenerator:
 
         prompt = f"""Generate a brief 2-part morning insight. Be concise and profound. MAX 80 words total.
 
-Today is {day_of_week}, Day {day_of_year} of {current_year}.{feedback_section}
+Today is {day_of_week}, Day {day_of_year} of {current_year}.{memory_section}{feedback_section}
 
-**PART 1 - Stoic Time Reminder (1 sentence):**
+CRITICAL RULES:
+- Do NOT use **, *, or any markdown formatting — write plain text only
+- Do NOT add any header, title, or date line
+
+PART 1 - Stoic Time Reminder (1 sentence):
 Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time, mortality, or living intentionally. Under 20 words.
 
-**PART 2 - Personal Journal Prompt:**
+PART 2 - Personal Journal Prompt:
 An uplifting journaling prompt focused on POSITIVE emotions (joy, gratitude, fulfillment, love, contentment). NOT work-related. NOT about fears or negatives.
 - Celebrate strengths, progress, or meaningful relationships
 - Relate naturally to {day_of_week}'s energy
@@ -399,11 +504,15 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
 
         try:
             print("  🤖 Generating Morning Insight with Claude Sonnet 4.6...")
-            response = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=200,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            kwargs = {
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 200,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+            if ai_instructions:
+                kwargs["system"] = ai_instructions
+
+            response = self.anthropic_client.messages.create(**kwargs)
             insight = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Morning Insight generated")
             return insight
@@ -425,8 +534,8 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
             return True
         return len([e for e in calendar_events if e['time'] not in ('All day', 'N/A')]) < 6
 
-    def generate_daily_briefing(self, checklist_items, strategic_goals,
-                                 journal_entries, calendar_events, user_feedback=None):
+    def generate_daily_briefing(self, checklist_items, strategic_goals, journal_entries,
+                                 calendar_events, ai_instructions="", memories=None, user_feedback=None):
         current_datetime = self.get_current_ist_time()
 
         journal_text = ' | '.join(
@@ -438,6 +547,10 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
         done_goals = [g for g in strategic_goals if "Done" in g]
         has_vacant = self.has_vacant_time_slots(calendar_events)
 
+        memory_section = ""
+        if memories:
+            memory_section = f"\n- AGENT MEMORY (long-term context): {'; '.join(memories[:10])}"
+
         feedback_section = ""
         if user_feedback:
             feedback_section = f"\n- USER FEEDBACK ON PREVIOUS BRIEFINGS: {'; '.join(user_feedback)}"
@@ -447,43 +560,54 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
 DATA:
 - WEEKLY TASKS (pending): {'; '.join(checklist_items[:5])}
 - ACTIVE GOALS: {'; '.join(active_goals[:4]) if active_goals else 'None'}
-- RECENTLY COMPLETED GOALS: {'; '.join(done_goals[:3]) if done_goals else 'None'}
+- RECENTLY COMPLETED GOALS (last 7 days only): {'; '.join(done_goals[:3]) if done_goals else 'None'}
 - JOURNAL (last 7 days): {journal_text}
 - TODAY'S CALENDAR: {'; '.join(calendar_lines)}
-  Color key — 🔴 Fun/Play  🔵 Office  🟢 Health  🟡 Chores  ⚪ Other
-- VACANT SLOTS AVAILABLE: {"Yes" if has_vacant else "No"}{feedback_section}
+  Color key — 🔴 Fun/Play  🔵 Office  🟢 Health  🟡 Chores  ⚪ Other{memory_section}{feedback_section}
+- VACANT SLOTS AVAILABLE: {"Yes" if has_vacant else "No"}
+
+CRITICAL RULES:
+- Start your response DIRECTLY with "1." — no header, no title, no date, no separator line
+- Do NOT use **, *, or any markdown formatting — write plain text only
+- ONLY reference information explicitly present in the DATA section above
+- Do NOT invent connections, metaphors, or context not directly stated in the data
+- If RECENTLY COMPLETED GOALS is "None", do not mention any completed goals
 
 Create EXACTLY 5 brief numbered insights. Vary sentence structure — avoid starting every sentence with "You".
 
-1. From journal + calendar, find something meaningful accomplished or experienced this week. Warm, grateful insight (2-3 sentences). Briefly celebrate any ✅ Done goals.
+1. From journal + calendar, find something genuinely accomplished or experienced this week. Warm, grateful insight (2-3 sentences). If RECENTLY COMPLETED GOALS has entries, briefly celebrate them.
 
 2. From Weekly Tasks, recommend ONE specific task for today and briefly explain why (1-2 sentences). Use language like "Today's priority could be...", "Worth tackling...", "Consider completing..."
 
 3. From Active Goals, suggest ONE specific action to take today (1-2 sentences). Be direct and actionable.
 
-4. {"Identify 2-3 time slots in today's calendar suited for focused work. Reference color categories where helpful. (2-3 suggestions)" if has_vacant else "Calendar is packed — suggest 2-3 micro-tasks that fit into natural breaks. No specific times."}
+4. {("Identify 2-3 time slots in today's calendar suited for focused work. Reference color categories where helpful. (2-3 suggestions)") if has_vacant else ("Calendar is packed — suggest 2-3 micro-tasks that fit into natural breaks. No specific times.")}
 
-5. {"Suggest ONE 🔴 Fun/Play activity for a free slot in the second half of the day." if has_vacant else "Suggest ONE relaxing activity that fits flexibly between commitments. No specific times."}
+5. {("Suggest ONE relaxing or enjoyable activity for a free slot in the second half of the day. Only reference events or activities explicitly in the data.") if has_vacant else ("Suggest ONE relaxing activity that fits flexibly between commitments. No specific times. Only reference activities explicitly in the data.")}
 
 Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
         try:
             print("  🤖 Generating Daily Briefing with Claude Sonnet 4.6...")
-            response = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=850,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            kwargs = {
+                "model": "claude-sonnet-4-6",
+                "max_tokens": 850,
+                "messages": [{"role": "user", "content": prompt}]
+            }
+            if ai_instructions:
+                kwargs["system"] = ai_instructions
+
+            response = self.anthropic_client.messages.create(**kwargs)
             briefing = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Daily Briefing generated")
             return briefing
         except Exception as e:
             print(f"  ❌ Claude error: {e}")
             return (
-                "1. This week's journal and calendar reflect consistent effort across life areas — that consistency is worth acknowledging.\n\n"
-                "2. Worth tackling the first item on the weekly checklist to keep momentum going.\n\n"
+                "1. This week's journal reflects consistent effort across multiple life areas.\n\n"
+                "2. Worth tackling the first pending item on the weekly checklist to keep momentum.\n\n"
                 "3. Take one concrete step toward the top active goal today, however small.\n\n"
-                f"4. {'Short calendar gaps work well for checklist items, quick reviews, or 10-minute stretches.' if has_vacant else 'Quick breaks throughout the day can handle micro-tasks without derailing focus.'}\n\n"
+                f"4. {'Short calendar gaps work well for checklist items, quick reviews, or stretches.' if has_vacant else 'Quick breaks can handle micro-tasks without derailing focus.'}\n\n"
                 f"5. {'Carve out evening time for something purely enjoyable — a game, book, or walk.' if has_vacant else 'Between commitments, something creative or playful offers a good reset.'}"
             )
 
@@ -496,7 +620,9 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
-        full_content = self.sanitize(f"{emoji} {marker_text} - {self.get_current_ist_time()}\n\n{content}")
+        # FIX: No emoji prefix in the text content.
+        # The callout icon already displays the emoji — adding it in text caused double emoji (☀️ ☀️).
+        full_content = self.sanitize(f"{marker_text} - {self.get_current_ist_time()}\n\n{content}")
         print(f"  📊 Content size: {len(full_content)} characters")
 
         block_data = {
@@ -540,8 +666,12 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
 
+        # ── AI Instructions + Memory — read BEFORE generating ──────────────
+        ai_instructions = self.get_agent_instructions()
+        memories = self.get_agent_memories()
+
         # ── Find existing blocks + read feedback comments ──────────────────
-        print("💬 Finding existing blocks and reading comments...")
+        print("\n💬 Finding existing blocks and reading comments...")
         insight_block_id = self.find_block_id("Morning Insight")
         briefing_block_id = self.find_block_id("Daily Insight")
 
@@ -568,7 +698,7 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         print("📋 Getting weekly checklist...")
         checklist_items = self.get_weekly_checklist_items()
 
-        print("🎯 Getting strategic goals...")
+        print("🎯 Getting strategic goals (In Progress + recently Done)...")
         strategic_goals = self.get_strategic_goals()
 
         print("📝 Getting journal entries (last 7 days)...")
@@ -576,13 +706,13 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
         # ── Generate ───────────────────────────────────────────────────────
         print("\n🧠 Generating Morning Insight (Part 1)...")
-        morning_insight = self.generate_morning_insight(insight_feedback)
+        morning_insight = self.generate_morning_insight(ai_instructions, memories, insight_feedback)
         print(f"  📊 {len(morning_insight)} characters")
 
         print("\n🧠 Generating Daily Briefing (Part 2)...")
         daily_briefing = self.generate_daily_briefing(
             checklist_items, strategic_goals, journal_entries,
-            calendar_events, briefing_feedback
+            calendar_events, ai_instructions, memories, briefing_feedback
         )
         print(f"  📊 {len(daily_briefing)} characters")
 
