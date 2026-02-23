@@ -31,6 +31,7 @@ class MorningInsightGenerator:
     Produces two Notion callout blocks:
       ☀️  Morning Insight  — 2-part: Stoic reminder + Journal prompt
       🌅  Daily Insight    — 5-part: Strategic briefing
+    After writing, saves one memory entry back to AGENT_MEMORY_DB_ID.
     """
 
     def __init__(self):
@@ -43,7 +44,7 @@ class MorningInsightGenerator:
         self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
 
         # AI Agent long-term memory and instructions
-        self.agent_instructions_page_id = os.getenv('AGENT_INSTRUCTIONS_PAGE_ID')
+        self.agent_instructions_page_id = os.getenv('AGENT_MEMORY_PAGE_ID')
         self.agent_memory_db_id = os.getenv('AGENT_MEMORY_DB_ID')
 
         self.max_retries = 3
@@ -151,12 +152,12 @@ class MorningInsightGenerator:
             print(f"  Calendar error: {e}")
             return [{"time": "N/A", "summary": "Calendar temporarily unavailable", "category": "⚪ Other"}]
 
-    # ─── AI Agent Instructions & Memory ──────────────────────────────────────
+    # ─── AI Agent Instructions & Memory (READ) ────────────────────────────────
 
     def get_agent_instructions(self):
-        """Fetch AI agent instructions from Notion page (AGENT_INSTRUCTIONS_PAGE_ID)."""
+        """Fetch AI agent instructions from Notion page (AGENT_MEMORY_PAGE_ID)."""
         if not self.agent_instructions_page_id:
-            print("  ⚠️ AGENT_INSTRUCTIONS_PAGE_ID not set — skipping")
+            print("  ⚠️ AGENT_MEMORY_PAGE_ID not set — skipping")
             return ""
         try:
             print("📖 Reading AI Instructions page...")
@@ -191,7 +192,6 @@ class MorningInsightGenerator:
             try:
                 props = entry.get('properties', {})
                 content = ''
-                # Try common title/content property names
                 for key in ['Memory', 'Name', 'Content', 'Observation', 'Note', 'Title']:
                     if key in props:
                         prop = props[key]
@@ -201,7 +201,6 @@ class MorningInsightGenerator:
                         elif prop.get('rich_text') and prop['rich_text']:
                             content = prop['rich_text'][0]['plain_text']
                             break
-                # Fallback: scan all properties
                 if not content:
                     for key, val in props.items():
                         if val.get('rich_text') and val['rich_text']:
@@ -229,6 +228,126 @@ class MorningInsightGenerator:
         except Exception as e:
             print(f"  ⚠️ Could not load Agent Memory: {e}")
             return []
+
+    # ─── AI Agent Memory (WRITE) ──────────────────────────────────────────────
+
+    def get_memory_db_title_property(self):
+        """
+        Fetch DB schema and return the name of the title-type property.
+        Falls back to 'Name' if the schema cannot be read.
+        """
+        try:
+            headers = {
+                "Authorization": f"Bearer {self.notion_token}",
+                "Notion-Version": "2022-06-28"
+            }
+            r = requests.get(
+                f"https://api.notion.com/v1/databases/{self.agent_memory_db_id}",
+                headers=headers, timeout=10
+            )
+            if r.status_code != 200:
+                print(f"  ⚠️ Could not read DB schema: HTTP {r.status_code} — defaulting to 'Name'")
+                return "Name"
+            for prop_name, prop_meta in r.json().get('properties', {}).items():
+                if prop_meta.get('type') == 'title':
+                    print(f"  ℹ️ Memory DB title property: '{prop_name}'")
+                    return prop_name
+        except Exception as e:
+            print(f"  ⚠️ Schema read error: {e} — defaulting to 'Name'")
+        return "Name"
+
+    def generate_memory_observation(self, checklist_items, strategic_goals,
+                                     journal_entries, calendar_events,
+                                     morning_insight, daily_briefing):
+        """
+        Ask Claude to write one concise memory entry summarising this run —
+        patterns, preferences, context useful for future runs.
+        """
+        ist = timezone(timedelta(hours=5, minutes=30))
+        run_date = datetime.now(ist).strftime("%Y-%m-%d")
+        active_goals = [g for g in strategic_goals if "In Progress" in g]
+        done_goals = [g for g in strategic_goals if "Done" in g]
+        journal_titles = [e['title'] for e in journal_entries[:4]]
+        calendar_summary = [f"{e['time']} {e['category']}: {e['summary']}" for e in calendar_events[:5]]
+
+        prompt = f"""You are an AI agent maintaining a long-term memory log about the user.
+
+After today's run, write ONE concise memory entry (max 80 words, plain text, no headers) capturing:
+- Notable patterns, preferences, or context about the user visible today
+- Key goals and their status
+- Journal themes and what the user seems focused on
+- Any context useful for improving tomorrow's briefing
+
+Run date: {run_date}
+Active goals: {'; '.join(active_goals[:4]) if active_goals else 'None'}
+Recently done goals: {'; '.join(done_goals[:3]) if done_goals else 'None'}
+Journal entries reviewed: {'; '.join(journal_titles)}
+Today's calendar: {'; '.join(calendar_summary)}
+Pending tasks: {'; '.join(checklist_items[:4])}
+Morning insight generated: {morning_insight[:120]}
+Daily briefing focus: {daily_briefing[:200]}
+
+Write a single plain-text paragraph. No labels, no markdown, no bullet points."""
+
+        try:
+            print("  🤖 Generating memory observation with Claude Sonnet 4.6...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            memory = "".join(
+                b.text for b in response.content if getattr(b, "type", None) == "text"
+            ).strip()
+            print("  ✅ Memory observation generated")
+            return memory
+        except Exception as e:
+            print(f"  ⚠️ Memory generation error: {e}")
+            ist = timezone(timedelta(hours=5, minutes=30))
+            return (
+                f"{datetime.now(ist).strftime('%Y-%m-%d')}: "
+                f"Active goals — {'; '.join(active_goals[:2]) if active_goals else 'None'}. "
+                f"Journal themes — {', '.join(journal_titles[:3])}. "
+                f"Pending tasks — {'; '.join(checklist_items[:3])}. "
+                f"Briefing generated successfully."
+            )
+
+    def save_agent_memory(self, observation):
+        """
+        Write a new page to AGENT_MEMORY_DB_ID with the observation as its title.
+        Detects the correct title property name automatically via get_memory_db_title_property().
+        """
+        if not self.agent_memory_db_id:
+            print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping memory save")
+            return
+
+        title_prop = self.get_memory_db_title_property()
+
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        payload = {
+            "parent": {"database_id": self.agent_memory_db_id},
+            "properties": {
+                title_prop: {
+                    "title": [{"type": "text", "text": {"content": observation[:2000]}}]
+                }
+            }
+        }
+
+        try:
+            r = requests.post(
+                "https://api.notion.com/v1/pages",
+                headers=headers, json=payload, timeout=15
+            )
+            if r.status_code in (200, 201):
+                print(f"  ✅ Memory saved to DB: {observation[:80]}...")
+            else:
+                print(f"  ⚠️ Failed to save memory: HTTP {r.status_code}: {r.text[:200]}")
+        except Exception as e:
+            print(f"  ⚠️ Memory save error: {e}")
 
     # ─── Notion Data Fetches ──────────────────────────────────────────────────
 
@@ -271,7 +390,7 @@ class MorningInsightGenerator:
         Fetch:
           - All goals with Status = 'In progress'
           - Goals with Status = 'Done' AND last_edited_time within the last 7 days
-        This prevents stale Done goals from appearing in the briefing.
+        Prevents stale Done goals from appearing in the briefing.
         """
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
@@ -511,7 +630,6 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
             }
             if ai_instructions:
                 kwargs["system"] = ai_instructions
-
             response = self.anthropic_client.messages.create(**kwargs)
             insight = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Morning Insight generated")
@@ -596,7 +714,6 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
             }
             if ai_instructions:
                 kwargs["system"] = ai_instructions
-
             response = self.anthropic_client.messages.create(**kwargs)
             briefing = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Daily Briefing generated")
@@ -620,8 +737,7 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
-        # FIX: No emoji prefix in the text content.
-        # The callout icon already displays the emoji — adding it in text caused double emoji (☀️ ☀️).
+        # No emoji prefix in text — callout icon already shows it, avoids double emoji (☀️ ☀️)
         full_content = self.sanitize(f"{marker_text} - {self.get_current_ist_time()}\n\n{content}")
         print(f"  📊 Content size: {len(full_content)} characters")
 
@@ -720,6 +836,18 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         print("\n📝 Writing to Notion...")
         self.write_block(morning_insight, "☀️", "orange_background", insight_block_id, "Morning Insight")
         self.write_block(daily_briefing, "🌅", "blue_background", briefing_block_id, "Daily Insight")
+
+        # ── Save memory observation back to DB ─────────────────────────────
+        if self.agent_memory_db_id:
+            print("\n🧠 Saving agent memory observation...")
+            observation = self.generate_memory_observation(
+                checklist_items, strategic_goals, journal_entries,
+                calendar_events, morning_insight, daily_briefing
+            )
+            print(f"  📝 Observation: {observation[:100]}...")
+            self.save_agent_memory(observation)
+        else:
+            print("\n  ⚠️ AGENT_MEMORY_DB_ID not set — skipping memory save")
 
         print(f"\n✅ All done at: {self.get_current_ist_time()}")
 
