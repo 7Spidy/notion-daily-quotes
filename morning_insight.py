@@ -4,29 +4,61 @@ from anthropic import Anthropic
 import requests
 import json
 import os
+import re
 from datetime import datetime, timezone, timedelta
+import jwt
 import time
 
+# Google Calendar colorId → (emoji, category label)
+CALENDAR_COLOR_MAP = {
+    "11": ("🔴", "Fun/Play"),   # Tomato
+    "4":  ("🔴", "Fun/Play"),   # Flamingo
+    "6":  ("🔴", "Fun/Play"),   # Tangerine
+    "9":  ("🔵", "Office"),     # Blueberry
+    "1":  ("🔵", "Office"),     # Lavender
+    "7":  ("🔵", "Office"),     # Peacock
+    "3":  ("🔵", "Office"),     # Grape
+    "10": ("🟢", "Health"),     # Basil
+    "2":  ("🟢", "Health"),     # Sage
+    "5":  ("🟡", "Chores"),     # Banana
+    "8":  ("🟡", "Chores"),     # Graphite
+}
+
+
 class MorningInsightGenerator:
-    """Generates brief 2-part morning insights: Stoic reminder + Personal journal prompt"""
-    
+    """
+    Single-file morning runner.
+    Produces two Notion callout blocks:
+      ☀️  Morning Insight  — 2-part: Stoic reminder + Journal prompt
+      🌅  Daily Insight    — 5-part: Strategic briefing
+    """
+
     def __init__(self):
         self.anthropic_client = Anthropic()
         self.notion_token = os.getenv('NOTION_API_KEY')
         self.page_id = os.getenv('NOTION_PAGE_ID')
-        
-        # Retry settings
+
+        self.weekly_checklist_db_id = os.getenv('WEEKLY_CHECKLIST_DB_ID')
+        self.strategic_goals_db_id = os.getenv('STRATEGIC_GOALS_DB_ID')
+        self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
+
         self.max_retries = 3
         self.retry_delay = 3
 
+        try:
+            self.google_credentials = json.loads(os.getenv('GOOGLE_CREDENTIALS'))
+            self.calendar_id = os.getenv('GOOGLE_CALENDAR_ID')
+        except Exception as e:
+            print(f"Google setup error: {e}")
+            self.google_credentials = None
+
+    # ─── Shared Helpers ───────────────────────────────────────────────────────
+
     def get_current_ist_time(self):
-        """Get current IST time"""
         ist = timezone(timedelta(hours=5, minutes=30))
-        now_ist = datetime.now(ist)
-        return now_ist.strftime("%A, %B %d, %Y - %I:%M %p IST")
+        return datetime.now(ist).strftime("%A, %B %d, %Y - %I:%M %p IST")
 
     def notion_retry(self, func, *args, **kwargs):
-        """Retry wrapper for Notion API calls"""
         for attempt in range(1, self.max_retries + 1):
             try:
                 if attempt > 1:
@@ -45,196 +77,522 @@ class MorningInsightGenerator:
                     print(f"  ❌ All {self.max_retries} attempts failed")
                     raise e
 
-    def generate_morning_insight(self):
-        """Generate 2-part morning insight with personal journal prompt"""
-        ist = timezone(timedelta(hours=5, minutes=30))
-        now = datetime.now(ist)
-        
-        day_of_year = now.timetuple().tm_yday
-        day_of_week = now.strftime("%A")
-        current_year = now.year
-        
-        # Determine day context
-        if day_of_week in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']:
-            day_context = 'work day - focusing on professional excellence and meaningful contribution'
-        elif day_of_week == 'Saturday':
-            day_context = 'Saturday - time for fun, personal projects, family, friends, and games'
-        else:  # Sunday
-            day_context = 'Sunday - reflection on the week, preparation for next week/month, and working on Notion goals'
-        
-        prompt = f"""Generate a brief 2-part morning insight. Be concise and profound. MAX 80 words total.
-
-Today is {day_of_week}, Day {day_of_year} of {current_year}.
-
-**PART 1 - Stoic Time Reminder (1 sentence):**
-Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time passing, mortality, or living intentionally. Keep it under 20 words.
-
-**PART 2 - Personal Journal Prompt:**
-Create a deeply personal, uplifting journaling prompt inspired by positive psychology and 2026 journal prompts. The prompt should:
-- Focus on POSITIVE emotions (joy, gratitude, fulfillment, peace, excitement, love, contentment)
-- Explore what brings meaning, happiness, and growth
-- Celebrate strengths, progress, or aspirations
-- Be about personal growth, relationships, or life meaning in a POSITIVE light
-- NOT be work-related at all
-- NOT focus on negative emotions, fears, or things avoided
-- Encourage appreciation, hope, and authentic joy
-- Relate naturally to the day's energy ({day_of_week})
-- Be specific enough to guide meaningful reflection
-- Start with "📝 Journal Prompt:"
-- Keep it under 30 words
-
-Format: TWO parts ONLY separated by a blank line. No section labels except for "📝 Journal Prompt:". Just the content."""
-        try:
-            print("  🤖 Generating insight with Claude 4.6 Sonnet...")
-            response = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=200,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-            )
-            
-            insight = "".join(
-                block.text for block in response.content if getattr(block, "type", None) == "text"
-            ).strip()
-            print("  ✅ Insight generated")
-            return insight
-        
-        except Exception as e:
-            print(f"  ❌ Claude error: {e}")
-            
-            # Fallback based on day
-            fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
-            
-            if day_of_week == 'Sunday':
-                fallback += "📝 Journal Prompt: What moment this week filled you with genuine joy, and how can you create more of that feeling?"
-            elif day_of_week == 'Saturday':
-                fallback += "📝 Journal Prompt: What activity makes you feel most alive and authentically yourself, and when will you do it next?"
-            else:
-                fallback += "📝 Journal Prompt: What relationship in your life brings you the most gratitude, and how can you celebrate that connection today?"
-            
-            return fallback
-
-    def sanitize_content_for_notion(self, content):
-        """Sanitize content to prevent Notion API errors"""
+    def sanitize(self, content, fallback="Content unavailable"):
         if not content:
-            return "Morning insight content unavailable"
-        
-        import re
+            return fallback
         content = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', content)
         content = content.encode('utf-8', errors='ignore').decode('utf-8')
-        
-        max_content_length = 1950
-        if len(content) > max_content_length:
-            content = content[:max_content_length] + "..."
-            print(f"  ⚠️ Content truncated to {max_content_length} characters")
-        
-        if not content.strip():
-            content = "Morning insight generated successfully"
-        
-        return content
+        if len(content) > 1950:
+            content = content[:1950] + "..."
+            print("  ⚠️ Content truncated to 1950 characters")
+        return content.strip() or fallback
 
-    def _update_notion_block_safe(self, insight_content):
-        """Update Notion with morning insight"""
+    # ─── Google Calendar ──────────────────────────────────────────────────────
+
+    def _get_google_access_token(self):
+        try:
+            now = int(time.time())
+            payload = {
+                'iss': self.google_credentials['client_email'],
+                'scope': 'https://www.googleapis.com/auth/calendar.readonly',
+                'aud': 'https://oauth2.googleapis.com/token',
+                'exp': now + 3600,
+                'iat': now
+            }
+            token = jwt.encode(payload, self.google_credentials['private_key'], algorithm='RS256')
+            r = requests.post('https://oauth2.googleapis.com/token', data={
+                'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                'assertion': token
+            })
+            return r.json().get('access_token')
+        except Exception as e:
+            print(f"  Token error: {e}")
+            return None
+
+    def get_calendar_events_today(self):
+        try:
+            access_token = self._get_google_access_token()
+            if not access_token:
+                return [{"time": "N/A", "summary": "Calendar access unavailable", "category": "⚪ Other"}]
+
+            ist = timezone(timedelta(hours=5, minutes=30))
+            now = datetime.now(ist)
+            params = {
+                'timeMin': now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
+                'timeMax': now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat(),
+                'singleEvents': True,
+                'orderBy': 'startTime'
+            }
+            r = requests.get(
+                f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
+                headers={'Authorization': f'Bearer {access_token}'}, params=params
+            )
+            if r.status_code != 200:
+                return [{"time": "N/A", "summary": "Calendar access error", "category": "⚪ Other"}]
+
+            events = []
+            for event in r.json().get('items', []):
+                start = event.get('start', {})
+                start_dt = start.get('dateTime', start.get('date', ''))
+                time_str = start_dt.split('T')[1][:5] if 'T' in start_dt else 'All day'
+                color_id = str(event.get('colorId', ''))
+                emoji, label = CALENDAR_COLOR_MAP.get(color_id, ("⚪", "Other"))
+                events.append({
+                    "time": time_str,
+                    "summary": event.get('summary', 'No title'),
+                    "category": f"{emoji} {label}"
+                })
+            return events or [{"time": "N/A", "summary": "No events today", "category": "⚪ Other"}]
+        except Exception as e:
+            print(f"  Calendar error: {e}")
+            return [{"time": "N/A", "summary": "Calendar temporarily unavailable", "category": "⚪ Other"}]
+
+    # ─── Notion Data Fetches ──────────────────────────────────────────────────
+
+    def _query_weekly_checklist(self):
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
-        
-        blocks_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
-        response = requests.get(blocks_url, headers=headers, timeout=10)
-        
-        if response.status_code != 200:
-            raise Exception(f"Failed to get blocks: HTTP {response.status_code}")
-        
-        blocks = response.json()
-        
-        # Find existing morning insight block
-        insight_block_id = None
-        for block in blocks.get('results', []):
-            if (block['type'] == 'callout' and 
-                block.get('callout', {}).get('rich_text') and
-                len(block['callout']['rich_text']) > 0 and
-                '☀️ Morning Insight' in block['callout']['rich_text'][0].get('plain_text', '')):
-                insight_block_id = block['id']
-                break
-        
-        current_datetime = self.get_current_ist_time()
-        full_content = f"☀️ Morning Insight - {current_datetime}\n\n{insight_content}"
-        full_content = self.sanitize_content_for_notion(full_content)
-        
-        print(f"  📊 Final content size: {len(full_content)} characters")
-        
-        new_block_data = {
-            "callout": {
-                "rich_text": [
-                    {
-                        "type": "text",
-                        "text": {
-                            "content": full_content
-                        }
-                    }
-                ],
-                "icon": {
-                    "emoji": "☀️"
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.weekly_checklist_db_id}/query",
+            headers=headers,
+            json={"filter": {"property": "Done?", "checkbox": {"equals": False}}, "page_size": 10},
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+        items = []
+        for item in r.json().get('results', []):
+            try:
+                name = 'Untitled task'
+                if 'Task' in item['properties'] and item['properties']['Task']['title']:
+                    name = item['properties']['Task']['title'][0]['plain_text']
+                items.append(name)
+            except Exception as e:
+                print(f"  ⚠️ Error parsing task: {e}")
+        return items or ["All weekly items completed"]
+
+    def get_weekly_checklist_items(self):
+        try:
+            print("📋 Getting weekly checklist...")
+            items = self.notion_retry(self._query_weekly_checklist)
+            print(f"  Found {len(items)} unchecked items")
+            return items
+        except Exception as e:
+            print(f"❌ Weekly checklist failed: {e}")
+            return ["Weekly planning review"]
+
+    def _query_strategic_goals(self):
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query",
+            headers=headers,
+            json={
+                "filter": {
+                    "or": [
+                        {"property": "Status", "status": {"equals": "In progress"}},
+                        {"property": "Status", "status": {"equals": "Done"}}
+                    ]
                 },
-                "color": "orange_background"
+                "page_size": 10
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+        goals = []
+        for goal in r.json().get('results', []):
+            try:
+                name = 'Untitled Goal'
+                if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
+                    name = goal['properties']['Name']['title'][0]['plain_text']
+                progress = 0
+                if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
+                    progress = int(goal['properties']['Progress']['number'])
+                status = 'Unknown'
+                if 'Status' in goal['properties'] and goal['properties']['Status']['status']:
+                    status = goal['properties']['Status']['status']['name']
+                tag = "✅ Done" if status == "Done" else "🔄 In Progress"
+                goals.append(f"{name} ({progress}% — {tag})")
+            except Exception as e:
+                print(f"  ⚠️ Error parsing goal: {e}")
+        return goals or ["Define new strategic goals"]
+
+    def get_strategic_goals(self):
+        try:
+            print("🎯 Getting strategic goals (In Progress + Done)...")
+            goals = self.notion_retry(self._query_strategic_goals)
+            print(f"  Found {len(goals)} goals")
+            return goals
+        except Exception as e:
+            print(f"❌ Strategic goals failed: {e}")
+            return ["Strategic milestone planning"]
+
+    def _get_page_content(self, page_id):
+        headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
+        r = requests.get(f"https://api.notion.com/v1/blocks/{page_id}/children", headers=headers, timeout=15)
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
+
+        def extract(rich_text):
+            return ''.join(t.get('plain_text', '') for t in (rich_text or []))
+
+        prefixes = {
+            'paragraph': '', 'heading_1': '# ', 'heading_2': '## ', 'heading_3': '### ',
+            'bulleted_list_item': '• ', 'numbered_list_item': '• ', 'quote': '> ', 'callout': '💡 '
+        }
+        parts = []
+        for block in r.json().get('results', []):
+            try:
+                bt = block.get('type', '')
+                if bt in prefixes:
+                    text = extract(block[bt]['rich_text'])
+                    if text.strip():
+                        parts.append(f"{prefixes[bt]}{text}")
+                elif bt == 'to_do':
+                    text = extract(block['to_do']['rich_text'])
+                    if text.strip():
+                        parts.append(f"{'✅' if block['to_do']['checked'] else '☐'} {text}")
+            except Exception:
+                pass
+        content = '\n'.join(parts)
+        return content[:800] if content else "No content found"
+
+    def _query_journal_entries(self):
+        """Fetch journal entries from the last 7 days with full page content."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        ist = timezone(timedelta(hours=5, minutes=30))
+        seven_days_ago = (datetime.now(ist) - timedelta(days=7)).strftime("%Y-%m-%d")
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query",
+            headers=headers,
+            json={
+                "filter": {
+                    "property": "Created time",
+                    "created_time": {"on_or_after": seven_days_ago}
+                },
+                "sorts": [{"property": "Created time", "direction": "descending"}],
+                "page_size": 10
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        entries = []
+        for entry in r.json().get('results', []):
+            try:
+                title = 'Journal Entry'
+                if 'Name' in entry['properties'] and entry['properties']['Name']['title']:
+                    title = entry['properties']['Name']['title'][0]['plain_text']
+                life_areas = []
+                if 'Life Area' in entry['properties'] and entry['properties']['Life Area']['multi_select']:
+                    life_areas = [a['name'] for a in entry['properties']['Life Area']['multi_select']]
+                created_date = 'Unknown'
+                if 'Created time' in entry['properties'] and entry['properties']['Created time']['created_time']:
+                    created_date = entry['properties']['Created time']['created_time'][:10]
+                print(f"  📖 Reading: {title} ({created_date})")
+                content = self._get_page_content(entry['id'])
+                entries.append({'title': title, 'content': content, 'life_areas': life_areas, 'date': created_date})
+                print(f"  ✅ Loaded: {len(content)} chars")
+            except Exception as e:
+                print(f"  ⚠️ Error: {e}")
+                entries.append({'title': 'Recent journal entry', 'content': 'Unavailable', 'life_areas': [], 'date': 'Recent'})
+        return entries or [{'title': 'Start journaling', 'content': 'Begin daily reflections', 'life_areas': ['Personal Growth'], 'date': 'Today'}]
+
+    def get_journal_entries(self):
+        try:
+            print("📝 Getting journal entries (last 7 days)...")
+            entries = self.notion_retry(self._query_journal_entries)
+            print(f"  ✅ Loaded {len(entries)} entries")
+            return entries
+        except Exception as e:
+            print(f"❌ Journal failed: {e}")
+            return [{'title': 'Daily reflection', 'content': 'Continue journaling', 'life_areas': ['Personal Growth'], 'date': 'Today'}]
+
+    # ─── Block Comment Feedback ───────────────────────────────────────────────
+
+    def find_block_id(self, marker_text):
+        """Find a callout block on the page whose text contains marker_text."""
+        try:
+            headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
+            r = requests.get(f"https://api.notion.com/v1/blocks/{self.page_id}/children", headers=headers, timeout=10)
+            if r.status_code != 200:
+                return None
+            for block in r.json().get('results', []):
+                if (block['type'] == 'callout' and
+                        block.get('callout', {}).get('rich_text') and
+                        marker_text in block['callout']['rich_text'][0].get('plain_text', '')):
+                    return block['id']
+        except Exception as e:
+            print(f"  ⚠️ Could not find block ({marker_text}): {e}")
+        return None
+
+    def get_block_comments(self, block_id):
+        """
+        Read user comments on a Notion block.
+        Requires 'Read comments' permission in your Notion integration settings.
+        """
+        if not block_id:
+            return []
+        try:
+            headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
+            r = requests.get(
+                "https://api.notion.com/v1/comments",
+                headers=headers, params={"block_id": block_id}, timeout=10
+            )
+            if r.status_code != 200:
+                print(f"  ⚠️ Comments API {r.status_code} — enable 'Read comments' in integration settings")
+                return []
+            comments = []
+            for c in r.json().get('results', []):
+                text = ''.join(t.get('plain_text', '') for t in c.get('rich_text', []))
+                created = c.get('created_time', '')[:10]
+                if text.strip():
+                    comments.append(f"[{created}] {text.strip()}")
+            return comments
+        except Exception as e:
+            print(f"  ⚠️ Could not fetch comments: {e}")
+            return []
+
+    # ─── Part 1: Morning Insight (Stoic + Journal Prompt) ────────────────────
+
+    def generate_morning_insight(self, user_feedback=None):
+        ist = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(ist)
+        day_of_year = now.timetuple().tm_yday
+        day_of_week = now.strftime("%A")
+        current_year = now.year
+
+        feedback_section = ""
+        if user_feedback:
+            feedback_section = (
+                f"\n\nUSER FEEDBACK ON PREVIOUS INSIGHTS: {'; '.join(user_feedback)}\n"
+                "Adjust your style, tone, or content based on this feedback."
+            )
+
+        prompt = f"""Generate a brief 2-part morning insight. Be concise and profound. MAX 80 words total.
+
+Today is {day_of_week}, Day {day_of_year} of {current_year}.{feedback_section}
+
+**PART 1 - Stoic Time Reminder (1 sentence):**
+Start with "Day {day_of_year} of {current_year}." Then add a profound stoic thought about time, mortality, or living intentionally. Under 20 words.
+
+**PART 2 - Personal Journal Prompt:**
+An uplifting journaling prompt focused on POSITIVE emotions (joy, gratitude, fulfillment, love, contentment). NOT work-related. NOT about fears or negatives.
+- Celebrate strengths, progress, or meaningful relationships
+- Relate naturally to {day_of_week}'s energy
+- Start with "📝 Journal Prompt:"
+- Under 30 words
+
+Format: TWO parts only, separated by a blank line. No labels except "📝 Journal Prompt:". Just the content."""
+
+        try:
+            print("  🤖 Generating Morning Insight with Claude Sonnet 4.6...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=200,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            insight = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+            print("  ✅ Morning Insight generated")
+            return insight
+        except Exception as e:
+            print(f"  ❌ Claude error: {e}")
+            fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
+            if day_of_week == 'Sunday':
+                fallback += "📝 Journal Prompt: What moment this week filled you with genuine joy, and how can you create more of that feeling?"
+            elif day_of_week == 'Saturday':
+                fallback += "📝 Journal Prompt: What activity makes you feel most alive and authentically yourself?"
+            else:
+                fallback += "📝 Journal Prompt: What relationship in your life brings the most gratitude, and how can you celebrate it today?"
+            return fallback
+
+    # ─── Part 2: Daily Briefing (5-Part Strategic) ───────────────────────────
+
+    def has_vacant_time_slots(self, calendar_events):
+        if not calendar_events or calendar_events[0]['time'] == 'N/A':
+            return True
+        return len([e for e in calendar_events if e['time'] not in ('All day', 'N/A')]) < 6
+
+    def generate_daily_briefing(self, checklist_items, strategic_goals,
+                                 journal_entries, calendar_events, user_feedback=None):
+        current_datetime = self.get_current_ist_time()
+
+        journal_text = ' | '.join(
+            f"{e['title']} ({e['date']}) [{', '.join(e['life_areas']) or 'General'}]: {e['content'][:350]}"
+            for e in journal_entries
+        )
+        calendar_lines = [f"{e['time']} {e['category']}: {e['summary']}" for e in calendar_events]
+        active_goals = [g for g in strategic_goals if "In Progress" in g]
+        done_goals = [g for g in strategic_goals if "Done" in g]
+        has_vacant = self.has_vacant_time_slots(calendar_events)
+
+        feedback_section = ""
+        if user_feedback:
+            feedback_section = f"\n- USER FEEDBACK ON PREVIOUS BRIEFINGS: {'; '.join(user_feedback)}"
+
+        prompt = f"""You are an AI briefing assistant. Today is {current_datetime}.
+
+DATA:
+- WEEKLY TASKS (pending): {'; '.join(checklist_items[:5])}
+- ACTIVE GOALS: {'; '.join(active_goals[:4]) if active_goals else 'None'}
+- RECENTLY COMPLETED GOALS: {'; '.join(done_goals[:3]) if done_goals else 'None'}
+- JOURNAL (last 7 days): {journal_text}
+- TODAY'S CALENDAR: {'; '.join(calendar_lines)}
+  Color key — 🔴 Fun/Play  🔵 Office  🟢 Health  🟡 Chores  ⚪ Other
+- VACANT SLOTS AVAILABLE: {"Yes" if has_vacant else "No"}{feedback_section}
+
+Create EXACTLY 5 brief numbered insights. Vary sentence structure — avoid starting every sentence with "You".
+
+1. From journal + calendar, find something meaningful accomplished or experienced this week. Warm, grateful insight (2-3 sentences). Briefly celebrate any ✅ Done goals.
+
+2. From Weekly Tasks, recommend ONE specific task for today and briefly explain why (1-2 sentences). Use language like "Today's priority could be...", "Worth tackling...", "Consider completing..."
+
+3. From Active Goals, suggest ONE specific action to take today (1-2 sentences). Be direct and actionable.
+
+4. {"Identify 2-3 time slots in today's calendar suited for focused work. Reference color categories where helpful. (2-3 suggestions)" if has_vacant else "Calendar is packed — suggest 2-3 micro-tasks that fit into natural breaks. No specific times."}
+
+5. {"Suggest ONE 🔴 Fun/Play activity for a free slot in the second half of the day." if has_vacant else "Suggest ONE relaxing activity that fits flexibly between commitments. No specific times."}
+
+Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
+
+        try:
+            print("  🤖 Generating Daily Briefing with Claude Sonnet 4.6...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=850,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            briefing = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
+            print("  ✅ Daily Briefing generated")
+            return briefing
+        except Exception as e:
+            print(f"  ❌ Claude error: {e}")
+            return (
+                "1. This week's journal and calendar reflect consistent effort across life areas — that consistency is worth acknowledging.\n\n"
+                "2. Worth tackling the first item on the weekly checklist to keep momentum going.\n\n"
+                "3. Take one concrete step toward the top active goal today, however small.\n\n"
+                f"4. {'Short calendar gaps work well for checklist items, quick reviews, or 10-minute stretches.' if has_vacant else 'Quick breaks throughout the day can handle micro-tasks without derailing focus.'}\n\n"
+                f"5. {'Carve out evening time for something purely enjoyable — a game, book, or walk.' if has_vacant else 'Between commitments, something creative or playful offers a good reset.'}"
+            )
+
+    # ─── Notion Write (shared) ────────────────────────────────────────────────
+
+    def _write_callout_block(self, content, emoji, color, existing_block_id, marker_text):
+        """Create or update a single callout block. Returns 'updated' or 'created'."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        full_content = self.sanitize(f"{emoji} {marker_text} - {self.get_current_ist_time()}\n\n{content}")
+        print(f"  📊 Content size: {len(full_content)} characters")
+
+        block_data = {
+            "callout": {
+                "rich_text": [{"type": "text", "text": {"content": full_content}}],
+                "icon": {"emoji": emoji},
+                "color": color
             }
         }
-        
-        try:
-            if insight_block_id:
-                # Update existing block
-                update_url = f"https://api.notion.com/v1/blocks/{insight_block_id}"
-                response = requests.patch(update_url, headers=headers, json=new_block_data, timeout=15)
-                
-                if response.status_code != 200:
-                    print(f"  ❌ Update failed: {response.status_code} - {response.text[:300]}")
-                    raise Exception(f"Failed to update block: HTTP {response.status_code}")
-                
-                return "updated"
-            else:
-                # Create new block
-                create_url = f"https://api.notion.com/v1/blocks/{self.page_id}/children"
-                payload = {"children": [new_block_data]}
-                response = requests.patch(create_url, headers=headers, json=payload, timeout=15)
-                
-                if response.status_code != 200:
-                    print(f"  ❌ Create failed: {response.status_code} - {response.text[:300]}")
-                    raise Exception(f"Failed to create block: HTTP {response.status_code}")
-                
-                return "created"
-        
-        except Exception as e:
-            print(f"  💡 Detailed error: {str(e)}")
-            print(f"  📊 Content length: {len(full_content)} characters")
-            raise e
 
-    def update_morning_insight(self, insight_content):
-        """Update Notion with retry"""
+        if existing_block_id:
+            r = requests.patch(
+                f"https://api.notion.com/v1/blocks/{existing_block_id}",
+                headers=headers, json=block_data, timeout=15
+            )
+            if r.status_code != 200:
+                raise Exception(f"Update failed: HTTP {r.status_code}: {r.text[:300]}")
+            return "updated"
+        else:
+            r = requests.patch(
+                f"https://api.notion.com/v1/blocks/{self.page_id}/children",
+                headers=headers, json={"children": [block_data]}, timeout=15
+            )
+            if r.status_code != 200:
+                raise Exception(f"Create failed: HTTP {r.status_code}: {r.text[:300]}")
+            return "created"
+
+    def write_block(self, content, emoji, color, existing_block_id, marker_text):
         try:
-            print("📝 Updating Notion page with morning insight...")
-            action = self.notion_retry(self._update_notion_block_safe, insight_content)
-            print(f"  ✅ Successfully {action} Morning Insight!")
+            action = self.notion_retry(
+                self._write_callout_block, content, emoji, color, existing_block_id, marker_text
+            )
+            print(f"  ✅ Successfully {action} {emoji} block")
         except Exception as e:
-            print(f"❌ Failed to update Notion: {str(e)}")
+            print(f"  ❌ Failed to write {emoji} block: {e}")
+
+    # ─── Main ─────────────────────────────────────────────────────────────────
 
     def run(self):
-        """Main execution"""
-        print(f"☀️ Morning Insight Generator (Claude 4.6 Sonnet)")
+        print(f"🌅 Morning Runner (Claude Sonnet 4.6)")
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
-        
-        print("🧠 Generating 2-part morning insight with personal journal prompt...")
-        insight = self.generate_morning_insight()
-        print(f"  📊 Generated: {len(insight)} characters\n")
-        
-        self.update_morning_insight(insight)
-        print(f"\n✅ Process completed at: {self.get_current_ist_time()}")
+
+        # ── Find existing blocks + read feedback comments ──────────────────
+        print("💬 Finding existing blocks and reading comments...")
+        insight_block_id = self.find_block_id("Morning Insight")
+        briefing_block_id = self.find_block_id("Daily Insight")
+
+        insight_feedback = []
+        briefing_feedback = []
+
+        if insight_block_id:
+            insight_feedback = self.get_block_comments(insight_block_id)
+            print(f"  ☀️  Morning Insight block found | {len(insight_feedback)} comment(s)")
+        else:
+            print("  ☀️  Morning Insight block not found — will create")
+
+        if briefing_block_id:
+            briefing_feedback = self.get_block_comments(briefing_block_id)
+            print(f"  🌅  Daily Insight block found | {len(briefing_feedback)} comment(s)")
+        else:
+            print("  🌅  Daily Insight block not found — will create")
+
+        # ── Fetch data ─────────────────────────────────────────────────────
+        print("\n📅 Getting calendar events...")
+        calendar_events = self.get_calendar_events_today()
+        print(f"  Found {len(calendar_events)} events")
+
+        print("📋 Getting weekly checklist...")
+        checklist_items = self.get_weekly_checklist_items()
+
+        print("🎯 Getting strategic goals...")
+        strategic_goals = self.get_strategic_goals()
+
+        print("📝 Getting journal entries (last 7 days)...")
+        journal_entries = self.get_journal_entries()
+
+        # ── Generate ───────────────────────────────────────────────────────
+        print("\n🧠 Generating Morning Insight (Part 1)...")
+        morning_insight = self.generate_morning_insight(insight_feedback)
+        print(f"  📊 {len(morning_insight)} characters")
+
+        print("\n🧠 Generating Daily Briefing (Part 2)...")
+        daily_briefing = self.generate_daily_briefing(
+            checklist_items, strategic_goals, journal_entries,
+            calendar_events, briefing_feedback
+        )
+        print(f"  📊 {len(daily_briefing)} characters")
+
+        # ── Write to Notion ────────────────────────────────────────────────
+        print("\n📝 Writing to Notion...")
+        self.write_block(morning_insight, "☀️", "orange_background", insight_block_id, "Morning Insight")
+        self.write_block(daily_briefing, "🌅", "blue_background", briefing_block_id, "Daily Insight")
+
+        print(f"\n✅ All done at: {self.get_current_ist_time()}")
+
 
 if __name__ == "__main__":
     generator = MorningInsightGenerator()
