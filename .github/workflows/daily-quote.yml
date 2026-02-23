@@ -28,34 +28,9 @@ jobs:
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
-        run: python morning_insight.py
-
-
-
-  strategic-daily-briefing:
-    name: Generate Strategic Daily Briefing
-    runs-on: ubuntu-latest
-    needs: morning-insight
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-
-      - name: Install dependencies
-        run: pip install anthropic requests PyJWT cryptography
-
-      - name: Generate Strategic Daily Briefing
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
           WEEKLY_CHECKLIST_DB_ID: ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
           STRATEGIC_GOALS_DB_ID: ${{ secrets.STRATEGIC_GOALS_DB_ID }}
           DAILY_JOURNAL_DB_ID: ${{ secrets.DAILY_JOURNAL_DB_ID }}
-        run: python daily_briefing.py
+          AGENT_MEMORY_PAGE_ID: ${{ secrets.AGENT_MEMORY_PAGE_ID }}
+          AGENT_MEMORY_DB_ID: ${{ secrets.AGENT_MEMORY_DB_ID }}
+        run: python morning_insight.py
