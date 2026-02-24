@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 import jwt
 import time
 
+# Google Calendar colorId → (emoji, category label)
 CALENDAR_COLOR_MAP = {
     "11": ("🔴", "Fun/Play"),
     "4":  ("🔴", "Fun/Play"),
@@ -30,7 +31,6 @@ class MorningInsightGenerator:
     Produces two Notion callout blocks:
       ☀️  Morning Insight  — 2-part: Stoic reminder + Journal prompt
       🌅  Daily Insight    — 5-part: Strategic briefing
-    Creates today's journal entry in Daily Journal DB with prompt pre-filled.
     After writing, saves one memory entry back to AGENT_MEMORY_DB_ID.
     """
 
@@ -43,6 +43,7 @@ class MorningInsightGenerator:
         self.strategic_goals_db_id = os.getenv('STRATEGIC_GOALS_DB_ID')
         self.daily_journal_db_id = os.getenv('DAILY_JOURNAL_DB_ID')
 
+        # AI Agent long-term memory and instructions
         self.agent_instructions_page_id = os.getenv('AGENT_MEMORY_PAGE_ID')
         self.agent_memory_db_id = os.getenv('AGENT_MEMORY_DB_ID')
 
@@ -90,101 +91,6 @@ class MorningInsightGenerator:
             content = content[:1950] + "..."
             print("  ⚠️ Content truncated to 1950 characters")
         return content.strip() or fallback
-
-    # ─── Block Content Readers ────────────────────────────────────────────────
-
-    def _extract_text_from_blocks(self, blocks, char_limit=800):
-        """
-        Shared text extractor from a list of Notion block objects.
-        Used by both _get_page_content (journals, 800 chars)
-        and _get_instructions_content (instructions, 5000 chars).
-        """
-        def extract(rich_text):
-            return ''.join(t.get('plain_text', '') for t in (rich_text or []))
-
-        prefixes = {
-            'paragraph': '',
-            'heading_1': '# ', 'heading_2': '## ', 'heading_3': '### ',
-            'bulleted_list_item': '• ', 'numbered_list_item': '• ',
-            'quote': '> ', 'callout': '💡 '
-        }
-        parts = []
-        for block in blocks:
-            try:
-                bt = block.get('type', '')
-                if bt in prefixes:
-                    text = extract(block[bt]['rich_text'])
-                    if text.strip():
-                        parts.append(f"{prefixes[bt]}{text}")
-                elif bt == 'to_do':
-                    text = extract(block['to_do']['rich_text'])
-                    if text.strip():
-                        status = '✅' if block['to_do']['checked'] else '☐'
-                        parts.append(f"{status} {text}")
-            except Exception:
-                pass
-        content = '\n'.join(parts)
-        return content[:char_limit] if content else "No content found"
-
-    def _get_page_content(self, page_id):
-        """
-        Read a Notion page's direct children — used for journal entries.
-        Capped at 800 chars (sufficient for journal summaries).
-        """
-        headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
-        r = requests.get(
-            f"https://api.notion.com/v1/blocks/{page_id}/children",
-            headers=headers, timeout=15
-        )
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}")
-        return self._extract_text_from_blocks(r.json().get('results', []), char_limit=800)
-
-    def _get_instructions_content(self, page_id):
-        """
-        Read a Notion page's content for use as AI instructions.
-        Key differences from _get_page_content:
-          - 5000 char limit (instructions can be long)
-          - Reads ONE level of child blocks inside toggle/columns
-          - Logs a preview so you can confirm what was actually read
-        """
-        headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
-
-        # Fetch top-level blocks
-        r = requests.get(
-            f"https://api.notion.com/v1/blocks/{page_id}/children",
-            headers=headers, timeout=15
-        )
-        if r.status_code != 200:
-            raise Exception(f"HTTP {r.status_code}")
-
-        top_blocks = r.json().get('results', [])
-        all_blocks = list(top_blocks)
-
-        # Also fetch children of toggle/column blocks (one level deep)
-        expandable_types = {'toggle', 'column_list', 'column', 'synced_block', 'template'}
-        for block in top_blocks:
-            bt = block.get('type', '')
-            has_children = block.get('has_children', False)
-            if has_children and (bt in expandable_types or bt.startswith('heading')):
-                try:
-                    child_r = requests.get(
-                        f"https://api.notion.com/v1/blocks/{block['id']}/children",
-                        headers=headers, timeout=10
-                    )
-                    if child_r.status_code == 200:
-                        all_blocks.extend(child_r.json().get('results', []))
-                except Exception:
-                    pass
-
-        content = self._extract_text_from_blocks(all_blocks, char_limit=5000)
-
-        # ── Debug: show what was actually read ──────────────────────────────
-        print(f"  📋 Instructions content ({len(content)} chars):")
-        preview_lines = content[:400].replace('\n', ' | ')
-        print(f"     {preview_lines}{'...' if len(content) > 400 else ''}")
-
-        return content
 
     # ─── Google Calendar ──────────────────────────────────────────────────────
 
@@ -246,28 +152,24 @@ class MorningInsightGenerator:
             print(f"  Calendar error: {e}")
             return [{"time": "N/A", "summary": "Calendar temporarily unavailable", "category": "⚪ Other"}]
 
-    # ─── AI Agent Instructions (READ) ─────────────────────────────────────────
+    # ─── AI Agent Instructions & Memory (READ) ────────────────────────────────
 
     def get_agent_instructions(self):
-        """
-        Fetch AI agent instructions from the AGENT_MEMORY_PAGE_ID Notion page.
-        Uses _get_instructions_content() (5000-char limit, nested blocks, debug preview).
-        """
+        """Fetch AI agent instructions from Notion page (AGENT_MEMORY_PAGE_ID)."""
         if not self.agent_instructions_page_id:
             print("  ⚠️ AGENT_MEMORY_PAGE_ID not set — skipping")
             return ""
         try:
             print("📖 Reading AI Instructions page...")
-            content = self._get_instructions_content(self.agent_instructions_page_id)
-            print(f"  ✅ AI Instructions loaded: {len(content)} chars total")
+            content = self._get_page_content(self.agent_instructions_page_id)
+            print(f"  ✅ AI Instructions loaded: {len(content)} chars")
             return content
         except Exception as e:
             print(f"  ⚠️ Could not load AI Instructions: {e}")
             return ""
 
-    # ─── AI Agent Memory (READ) ───────────────────────────────────────────────
-
     def _query_agent_memories(self):
+        """Query recent entries from Agent Memory DB."""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -314,6 +216,7 @@ class MorningInsightGenerator:
         return memories
 
     def get_agent_memories(self):
+        """Fetch recent agent memory entries from Notion DB (AGENT_MEMORY_DB_ID)."""
         if not self.agent_memory_db_id:
             print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping")
             return []
@@ -329,6 +232,10 @@ class MorningInsightGenerator:
     # ─── AI Agent Memory (WRITE) ──────────────────────────────────────────────
 
     def get_memory_db_title_property(self):
+        """
+        Fetch DB schema and return the name of the title-type property.
+        Falls back to 'Name' if the schema cannot be read.
+        """
         try:
             headers = {
                 "Authorization": f"Bearer {self.notion_token}",
@@ -350,8 +257,12 @@ class MorningInsightGenerator:
         return "Name"
 
     def generate_memory_observation(self, checklist_items, strategic_goals,
-                                    journal_entries, calendar_events,
-                                    morning_insight, daily_briefing):
+                                     journal_entries, calendar_events,
+                                     morning_insight, daily_briefing):
+        """
+        Ask Claude to write one concise memory entry summarising this run —
+        patterns, preferences, context useful for future runs.
+        """
         ist = timezone(timedelta(hours=5, minutes=30))
         run_date = datetime.now(ist).strftime("%Y-%m-%d")
         active_goals = [g for g in strategic_goals if "In Progress" in g]
@@ -402,11 +313,16 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             )
 
     def save_agent_memory(self, observation):
+        """
+        Write a new page to AGENT_MEMORY_DB_ID with the observation as its title.
+        Detects the correct title property name automatically via get_memory_db_title_property().
+        """
         if not self.agent_memory_db_id:
             print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping memory save")
             return
 
         title_prop = self.get_memory_db_title_property()
+
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -420,13 +336,14 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
                 }
             }
         }
+
         try:
             r = requests.post(
                 "https://api.notion.com/v1/pages",
                 headers=headers, json=payload, timeout=15
             )
             if r.status_code in (200, 201):
-                print(f"  ✅ Memory saved: {observation[:80]}...")
+                print(f"  ✅ Memory saved to DB: {observation[:80]}...")
             else:
                 print(f"  ⚠️ Failed to save memory: HTTP {r.status_code}: {r.text[:200]}")
         except Exception as e:
@@ -469,6 +386,12 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             return ["Weekly planning review"]
 
     def _query_strategic_goals(self):
+        """
+        Fetch:
+          - All goals with Status = 'In progress'
+          - Goals with Status = 'Done' AND last_edited_time within the last 7 days
+        Prevents stale Done goals from appearing in the briefing.
+        """
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -483,7 +406,10 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             json={
                 "filter": {
                     "or": [
-                        {"property": "Status", "status": {"equals": "In progress"}},
+                        {
+                            "property": "Status",
+                            "status": {"equals": "In progress"}
+                        },
                         {
                             "and": [
                                 {"property": "Status", "status": {"equals": "Done"}},
@@ -501,7 +427,6 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
         )
         if r.status_code != 200:
             raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
-
         goals = []
         for goal in r.json().get('results', []):
             try:
@@ -529,7 +454,38 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             print(f"❌ Strategic goals failed: {e}")
             return ["Strategic milestone planning"]
 
+    def _get_page_content(self, page_id):
+        headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
+        r = requests.get(f"https://api.notion.com/v1/blocks/{page_id}/children", headers=headers, timeout=15)
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}")
+
+        def extract(rich_text):
+            return ''.join(t.get('plain_text', '') for t in (rich_text or []))
+
+        prefixes = {
+            'paragraph': '', 'heading_1': '# ', 'heading_2': '## ', 'heading_3': '### ',
+            'bulleted_list_item': '• ', 'numbered_list_item': '• ', 'quote': '> ', 'callout': '💡 '
+        }
+        parts = []
+        for block in r.json().get('results', []):
+            try:
+                bt = block.get('type', '')
+                if bt in prefixes:
+                    text = extract(block[bt]['rich_text'])
+                    if text.strip():
+                        parts.append(f"{prefixes[bt]}{text}")
+                elif bt == 'to_do':
+                    text = extract(block['to_do']['rich_text'])
+                    if text.strip():
+                        parts.append(f"{'✅' if block['to_do']['checked'] else '☐'} {text}")
+            except Exception:
+                pass
+        content = '\n'.join(parts)
+        return content[:800] if content else "No content found"
+
     def _query_journal_entries(self):
+        """Fetch journal entries from the last 7 days with full page content."""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
@@ -567,27 +523,12 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
                     created_date = entry['properties']['Created time']['created_time'][:10]
                 print(f"  📖 Reading: {title} ({created_date})")
                 content = self._get_page_content(entry['id'])
-                entries.append({
-                    'title': title,
-                    'content': content,
-                    'life_areas': life_areas,
-                    'date': created_date
-                })
+                entries.append({'title': title, 'content': content, 'life_areas': life_areas, 'date': created_date})
                 print(f"  ✅ Loaded: {len(content)} chars")
             except Exception as e:
                 print(f"  ⚠️ Error: {e}")
-                entries.append({
-                    'title': 'Recent journal entry',
-                    'content': 'Unavailable',
-                    'life_areas': [],
-                    'date': 'Recent'
-                })
-        return entries or [{
-            'title': 'Start journaling',
-            'content': 'Begin daily reflections',
-            'life_areas': ['Personal Growth'],
-            'date': 'Today'
-        }]
+                entries.append({'title': 'Recent journal entry', 'content': 'Unavailable', 'life_areas': [], 'date': 'Recent'})
+        return entries or [{'title': 'Start journaling', 'content': 'Begin daily reflections', 'life_areas': ['Personal Growth'], 'date': 'Today'}]
 
     def get_journal_entries(self):
         try:
@@ -596,153 +537,28 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             return entries
         except Exception as e:
             print(f"❌ Journal failed: {e}")
-            return [{
-                'title': 'Daily reflection',
-                'content': 'Continue journaling',
-                'life_areas': ['Personal Growth'],
-                'date': 'Today'
-            }]
-
-    # ─── Journal Entry Pre-fill ───────────────────────────────────────────────
-
-    def extract_journal_prompt(self, morning_insight):
-        """Pull the text after '📝 Journal Prompt:' from the morning insight."""
-        marker = "📝 Journal Prompt:"
-        if marker in morning_insight:
-            return morning_insight.split(marker, 1)[1].strip()
-        # Fallback: try plain text marker
-        marker_plain = "Journal Prompt:"
-        if marker_plain in morning_insight:
-            return morning_insight.split(marker_plain, 1)[1].strip()
-        return ""
-
-    def _journal_entry_exists_today(self):
-        """Return True if a journal entry already exists for today (IST date)."""
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.notion_token}",
-                "Content-Type": "application/json",
-                "Notion-Version": "2022-06-28"
-            }
-            ist = timezone(timedelta(hours=5, minutes=30))
-            today_str = datetime.now(ist).strftime("%Y-%m-%d")
-
-            r = requests.post(
-                f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query",
-                headers=headers,
-                json={
-                    "filter": {
-                        "property": "Created time",
-                        "created_time": {"on_or_after": today_str}
-                    },
-                    "page_size": 1
-                },
-                timeout=10
-            )
-            if r.status_code == 200 and r.json().get('results'):
-                return True
-        except Exception as e:
-            print(f"  ⚠️ Could not check for existing entry: {e}")
-        return False
-
-    def create_todays_journal_entry(self, prompt_text):
-        """
-        Create a new journal entry page for today with the prompt
-        pre-filled as a yellow callout block at the top.
-        User writes their entry in the empty paragraph below.
-        Skips creation if an entry already exists today.
-        """
-        if not self.daily_journal_db_id:
-            print("  ⚠️ DAILY_JOURNAL_DB_ID not set — skipping journal entry creation")
-            return
-
-        if self._journal_entry_exists_today():
-            print("  ℹ️ Journal entry already exists for today — skipping creation")
-            return
-
-        if not prompt_text:
-            print("  ⚠️ No prompt text extracted — skipping journal entry creation")
-            return
-
-        ist = timezone(timedelta(hours=5, minutes=30))
-        now = datetime.now(ist)
-        entry_title = now.strftime("@%B %-d, %Y")  # e.g. "@February 24, 2026"
-
-        headers = {
-            "Authorization": f"Bearer {self.notion_token}",
-            "Content-Type": "application/json",
-            "Notion-Version": "2022-06-28"
-        }
-
-        payload = {
-            "parent": {"database_id": self.daily_journal_db_id},
-            "properties": {
-                "Name": {
-                    "title": [{"type": "text", "text": {"content": entry_title}}]
-                }
-            },
-            "children": [
-                # Prompt shown as a warm yellow callout at the top
-                {
-                    "object": "block",
-                    "type": "callout",
-                    "callout": {
-                        "rich_text": [
-                            {
-                                "type": "text",
-                                "text": {"content": f"📝 Today's Prompt\n\n{prompt_text}"}
-                            }
-                        ],
-                        "icon": {"emoji": "✍️"},
-                        "color": "yellow_background"
-                    }
-                },
-                # Empty paragraph — cursor lands here for writing
-                {
-                    "object": "block",
-                    "type": "paragraph",
-                    "paragraph": {
-                        "rich_text": [{"type": "text", "text": {"content": ""}}]
-                    }
-                }
-            ]
-        }
-
-        try:
-            r = requests.post(
-                "https://api.notion.com/v1/pages",
-                headers=headers, json=payload, timeout=15
-            )
-            if r.status_code in (200, 201):
-                page_url = r.json().get('url', '')
-                print(f"  ✅ Journal entry created: {entry_title}")
-                print(f"  🔗 {page_url}")
-            else:
-                print(f"  ⚠️ Failed to create journal entry: HTTP {r.status_code}: {r.text[:200]}")
-        except Exception as e:
-            print(f"  ⚠️ Journal entry creation error: {e}")
+            return [{'title': 'Daily reflection', 'content': 'Continue journaling', 'life_areas': ['Personal Growth'], 'date': 'Today'}]
 
     # ─── Block Comment Feedback ───────────────────────────────────────────────
 
     def find_block_id(self, marker_text):
+        """Find a callout block on the page whose text contains marker_text."""
         try:
             headers = {"Authorization": f"Bearer {self.notion_token}", "Notion-Version": "2022-06-28"}
-            r = requests.get(
-                f"https://api.notion.com/v1/blocks/{self.page_id}/children",
-                headers=headers, timeout=10
-            )
+            r = requests.get(f"https://api.notion.com/v1/blocks/{self.page_id}/children", headers=headers, timeout=10)
             if r.status_code != 200:
                 return None
             for block in r.json().get('results', []):
-                if (block['type'] == 'callout'
-                        and block.get('callout', {}).get('rich_text')
-                        and marker_text in block['callout']['rich_text'][0].get('plain_text', '')):
+                if (block['type'] == 'callout' and
+                        block.get('callout', {}).get('rich_text') and
+                        marker_text in block['callout']['rich_text'][0].get('plain_text', '')):
                     return block['id']
         except Exception as e:
             print(f"  ⚠️ Could not find block ({marker_text}): {e}")
         return None
 
     def get_block_comments(self, block_id):
+        """Read user comments on a Notion block."""
         if not block_id:
             return []
         try:
@@ -765,7 +581,7 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             print(f"  ⚠️ Could not fetch comments: {e}")
             return []
 
-    # ─── Part 1: Morning Insight ──────────────────────────────────────────────
+    # ─── Part 1: Morning Insight (Stoic + Journal Prompt) ────────────────────
 
     def generate_morning_insight(self, ai_instructions="", memories=None, user_feedback=None):
         ist = timezone(timedelta(hours=5, minutes=30))
@@ -806,12 +622,7 @@ An uplifting journaling prompt focused on POSITIVE emotions (joy, gratitude, ful
 Format: TWO parts only, separated by a blank line. No labels except "📝 Journal Prompt:". Just the content."""
 
         try:
-            print("  🤖 Calling Claude Sonnet 4.6 for Morning Insight...")
-            if ai_instructions:
-                print(f"  📌 System prompt: ACTIVE ({len(ai_instructions)} chars)")
-            else:
-                print("  📌 System prompt: NONE (AGENT_MEMORY_PAGE_ID may be empty or unreadable)")
-
+            print("  🤖 Generating Morning Insight with Claude Sonnet 4.6...")
             kwargs = {
                 "model": "claude-sonnet-4-6",
                 "max_tokens": 200,
@@ -819,14 +630,10 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
             }
             if ai_instructions:
                 kwargs["system"] = ai_instructions
-
             response = self.anthropic_client.messages.create(**kwargs)
-            insight = "".join(
-                b.text for b in response.content if getattr(b, "type", None) == "text"
-            ).strip()
+            insight = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Morning Insight generated")
             return insight
-
         except Exception as e:
             print(f"  ❌ Claude error: {e}")
             fallback = f"Day {day_of_year} of {current_year}. Each morning is a gift; unwrap it with intention.\n\n"
@@ -838,7 +645,7 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
                 fallback += "📝 Journal Prompt: What relationship in your life brings the most gratitude, and how can you celebrate it today?"
             return fallback
 
-    # ─── Part 2: Daily Briefing ───────────────────────────────────────────────
+    # ─── Part 2: Daily Briefing (5-Part Strategic) ───────────────────────────
 
     def has_vacant_time_slots(self, calendar_events):
         if not calendar_events or calendar_events[0]['time'] == 'N/A':
@@ -846,8 +653,7 @@ Format: TWO parts only, separated by a blank line. No labels except "📝 Journa
         return len([e for e in calendar_events if e['time'] not in ('All day', 'N/A')]) < 6
 
     def generate_daily_briefing(self, checklist_items, strategic_goals, journal_entries,
-                                calendar_events, ai_instructions="", memories=None,
-                                user_feedback=None):
+                                 calendar_events, ai_instructions="", memories=None, user_feedback=None):
         current_datetime = self.get_current_ist_time()
 
         journal_text = ' | '.join(
@@ -885,27 +691,22 @@ CRITICAL RULES:
 - Do NOT invent connections, metaphors, or context not directly stated in the data
 - If RECENTLY COMPLETED GOALS is "None", do not mention any completed goals
 
-Create EXACTLY 5 brief numbered insights. Vary sentence structure.
+Create EXACTLY 5 brief numbered insights. Vary sentence structure — avoid starting every sentence with "You".
 
 1. From journal + calendar, find something genuinely accomplished or experienced this week. Warm, grateful insight (2-3 sentences). If RECENTLY COMPLETED GOALS has entries, briefly celebrate them.
 
-2. From Weekly Tasks, recommend ONE specific task for today and briefly explain why (1-2 sentences).
+2. From Weekly Tasks, recommend ONE specific task for today and briefly explain why (1-2 sentences). Use language like "Today's priority could be...", "Worth tackling...", "Consider completing..."
 
 3. From Active Goals, suggest ONE specific action to take today (1-2 sentences). Be direct and actionable.
 
-4. {("Identify 2-3 time slots in today's calendar suited for focused work. Reference color categories where helpful.") if has_vacant else ("Calendar is packed — suggest 2-3 micro-tasks that fit into natural breaks. No specific times.")}
+4. {("Identify 2-3 time slots in today's calendar suited for focused work. Reference color categories where helpful. (2-3 suggestions)") if has_vacant else ("Calendar is packed — suggest 2-3 micro-tasks that fit into natural breaks. No specific times.")}
 
-5. {("Suggest ONE relaxing or enjoyable activity for a free slot in the second half of the day.") if has_vacant else ("Suggest ONE relaxing activity that fits flexibly between commitments. No specific times.")}
+5. {("Suggest ONE relaxing or enjoyable activity for a free slot in the second half of the day. Only reference events or activities explicitly in the data.") if has_vacant else ("Suggest ONE relaxing activity that fits flexibly between commitments. No specific times. Only reference activities explicitly in the data.")}
 
 Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
 
         try:
-            print("  🤖 Calling Claude Sonnet 4.6 for Daily Briefing...")
-            if ai_instructions:
-                print(f"  📌 System prompt: ACTIVE ({len(ai_instructions)} chars)")
-            else:
-                print("  📌 System prompt: NONE")
-
+            print("  🤖 Generating Daily Briefing with Claude Sonnet 4.6...")
             kwargs = {
                 "model": "claude-sonnet-4-6",
                 "max_tokens": 850,
@@ -913,14 +714,10 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
             }
             if ai_instructions:
                 kwargs["system"] = ai_instructions
-
             response = self.anthropic_client.messages.create(**kwargs)
-            briefing = "".join(
-                b.text for b in response.content if getattr(b, "type", None) == "text"
-            ).strip()
+            briefing = "".join(b.text for b in response.content if getattr(b, "type", None) == "text").strip()
             print("  ✅ Daily Briefing generated")
             return briefing
-
         except Exception as e:
             print(f"  ❌ Claude error: {e}")
             return (
@@ -934,14 +731,14 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
     # ─── Notion Write (shared) ────────────────────────────────────────────────
 
     def _write_callout_block(self, content, emoji, color, existing_block_id, marker_text):
+        """Create or update a single callout block. Returns 'updated' or 'created'."""
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
             "Content-Type": "application/json",
             "Notion-Version": "2022-06-28"
         }
-        full_content = self.sanitize(
-            f"{marker_text} - {self.get_current_ist_time()}\n\n{content}"
-        )
+        # No emoji prefix in text — callout icon already shows it, avoids double emoji (☀️ ☀️)
+        full_content = self.sanitize(f"{marker_text} - {self.get_current_ist_time()}\n\n{content}")
         print(f"  📊 Content size: {len(full_content)} characters")
 
         block_data = {
@@ -985,7 +782,7 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         print(f"🕐 Started at: {self.get_current_ist_time()}")
         print(f"🔄 Retry config: {self.max_retries} attempts, {self.retry_delay}s delay\n")
 
-        # ── AI Instructions + Memory ───────────────────────────────────────
+        # ── AI Instructions + Memory — read BEFORE generating ──────────────
         ai_instructions = self.get_agent_instructions()
         memories = self.get_agent_memories()
 
@@ -1040,14 +837,7 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
         self.write_block(morning_insight, "☀️", "orange_background", insight_block_id, "Morning Insight")
         self.write_block(daily_briefing, "🌅", "blue_background", briefing_block_id, "Daily Insight")
 
-        # ── Pre-fill today's journal entry ─────────────────────────────────
-        print("\n📓 Creating today's journal entry with prompt pre-filled...")
-        journal_prompt = self.extract_journal_prompt(morning_insight)
-        if journal_prompt:
-            print(f"  📝 Prompt extracted: {journal_prompt[:80]}...")
-        self.create_todays_journal_entry(journal_prompt)
-
-        # ── Save memory observation ────────────────────────────────────────
+        # ── Save memory observation back to DB ─────────────────────────────
         if self.agent_memory_db_id:
             print("\n🧠 Saving agent memory observation...")
             observation = self.generate_memory_observation(
