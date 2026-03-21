@@ -349,6 +349,167 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
         except Exception as e:
             print(f"  ⚠️ Memory save error: {e}")
 
+    # ─── Weekly Memory Table Refactor ─────────────────────────────────────────
+
+    def refactor_memory_table(self):
+        """
+        Weekly cleanup: archive entries older than 14 days and replace with one consolidated summary.
+        Consolidated entries are marked with [CONSOLIDATED] and never deleted.
+        """
+        if not self.agent_memory_db_id:
+            print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping refactor")
+            return
+
+        print("\n🗂️  Running weekly memory table refactor...")
+
+        ist = timezone(timedelta(hours=5, minutes=30))
+        cutoff_date = datetime.now(ist) - timedelta(days=14)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
+
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+
+        # Fetch all entries older than 14 days
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.agent_memory_db_id}/query",
+            headers=headers,
+            json={
+                "filter": {
+                    "property": "Created time",
+                    "created_time": {
+                        "before": cutoff_date.isoformat()
+                    }
+                },
+                "sorts": [{"property": "Created time", "direction": "ascending"}],
+                "page_size": 100
+            },
+            timeout=15
+        )
+
+        if r.status_code != 200:
+            print(f"  ⚠️ Query failed: HTTP {r.status_code}")
+            return
+
+        old_entries = r.json().get('results', [])
+        print(f"  Found {len(old_entries)} entries older than 14 days")
+
+        if len(old_entries) == 0:
+            print("  ✅ No old entries to refactor")
+            return
+
+        # Separate consolidated entries from regular ones
+        consolidated_entries = []
+        regular_entries = []
+
+        for entry in old_entries:
+            try:
+                props = entry.get('properties', {})
+                title = ''
+                for key in ['Memory', 'Name', 'Content', 'Observation', 'Note', 'Title']:
+                    if key in props:
+                        prop = props[key]
+                        if prop.get('title') and prop['title']:
+                            title = prop['title'][0]['plain_text']
+                            break
+                        elif prop.get('rich_text') and prop['rich_text']:
+                            title = prop['rich_text'][0]['plain_text']
+                            break
+
+                if '[CONSOLIDATED]' in title:
+                    consolidated_entries.append({'id': entry['id'], 'title': title})
+                else:
+                    regular_entries.append({'id': entry['id'], 'title': title, 'created': entry.get('created_time', '')[:10]})
+            except Exception as e:
+                print(f"  ⚠️ Error parsing entry: {e}")
+
+        print(f"  Found {len(consolidated_entries)} existing consolidated entries (will preserve)")
+        print(f"  Found {len(regular_entries)} regular entries to consolidate")
+
+        if len(regular_entries) == 0:
+            print("  ✅ No regular entries to consolidate")
+            return
+
+        # Generate consolidated summary
+        first_date = regular_entries[0]['created'] if regular_entries else cutoff_str
+        last_date = regular_entries[-1]['created'] if regular_entries else cutoff_str
+        
+        entries_text = ' | '.join([f"{e['created']}: {e['title'][:100]}" for e in regular_entries[:30]])
+
+        consolidation_prompt = f"""Summarize these {len(regular_entries)} memory entries from {first_date} to {last_date} into ONE concise paragraph (max 150 words).
+
+Entries: {entries_text}
+
+Focus on:
+- Recurring themes and patterns
+- Key goals and their evolution
+- Important context about the user's focus and priorities
+- Any significant changes or trends
+
+Write a single plain-text paragraph. No labels, no markdown, no bullet points."""
+
+        try:
+            print("  🤖 Generating consolidated summary with Claude...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=250,
+                messages=[{"role": "user", "content": consolidation_prompt}]
+            )
+            consolidated_summary = "".join(
+                b.text for b in response.content if getattr(b, "type", None) == "text"
+            ).strip()
+            print("  ✅ Consolidated summary generated")
+        except Exception as e:
+            print(f"  ⚠️ Consolidation error: {e}")
+            consolidated_summary = f"Consolidated {len(regular_entries)} memory entries from {first_date} to {last_date}. Key themes: ongoing goal tracking, daily journaling, and strategic planning."
+
+        # Create consolidated entry
+        title_prop = self.get_memory_db_title_property()
+        consolidated_title = f"[CONSOLIDATED] {first_date} to {last_date}"
+
+        payload = {
+            "parent": {"database_id": self.agent_memory_db_id},
+            "properties": {
+                title_prop: {
+                    "title": [{"type": "text", "text": {"content": f"{consolidated_title}\n\n{consolidated_summary}"[:2000]}}]
+                }
+            }
+        }
+
+        try:
+            r = requests.post(
+                "https://api.notion.com/v1/pages",
+                headers=headers, json=payload, timeout=15
+            )
+            if r.status_code in (200, 201):
+                print(f"  ✅ Created consolidated entry: {consolidated_title}")
+            else:
+                print(f"  ⚠️ Failed to create consolidated entry: HTTP {r.status_code}")
+                return
+        except Exception as e:
+            print(f"  ⚠️ Error creating consolidated entry: {e}")
+            return
+
+        # Archive regular entries
+        archived_count = 0
+        for entry in regular_entries:
+            try:
+                r = requests.patch(
+                    f"https://api.notion.com/v1/pages/{entry['id']}",
+                    headers=headers,
+                    json={"archived": True},
+                    timeout=10
+                )
+                if r.status_code == 200:
+                    archived_count += 1
+            except Exception as e:
+                print(f"  ⚠️ Error archiving {entry['id']}: {e}")
+
+        print(f"  ✅ Archived {archived_count}/{len(regular_entries)} old entries")
+        print(f"  🎯 Refactor complete: {len(consolidated_entries) + 1} total consolidated entries in DB")
+
     # ─── Notion Data Fetches ──────────────────────────────────────────────────
 
     def _query_weekly_checklist(self):
@@ -433,9 +594,12 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
                 name = 'Untitled Goal'
                 if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
                     name = goal['properties']['Name']['title'][0]['plain_text']
+                
+                # FIX: Progress is stored as decimal (0.11 = 11%), multiply by 100 before int()
                 progress = 0
                 if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
-                    progress = int(goal['properties']['Progress']['number'])
+                    progress = int(goal['properties']['Progress']['number'] * 100)
+                
                 status = 'Unknown'
                 if 'Status' in goal['properties'] and goal['properties']['Status']['status']:
                     status = goal['properties']['Status']['status']['name']
@@ -848,6 +1012,13 @@ Keep TOTAL response under 850 characters. Be warm, direct, and actionable."""
             self.save_agent_memory(observation)
         else:
             print("\n  ⚠️ AGENT_MEMORY_DB_ID not set — skipping memory save")
+
+        # ── Weekly refactor (runs only on Sunday) ──────────────────────────
+        ist = timezone(timedelta(hours=5, minutes=30))
+        if datetime.now(ist).strftime("%A") == "Sunday":
+            self.refactor_memory_table()
+        else:
+            print("\n  ℹ️  Not Sunday — skipping weekly memory refactor")
 
         print(f"\n✅ All done at: {self.get_current_ist_time()}")
 
