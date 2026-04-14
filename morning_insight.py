@@ -257,29 +257,29 @@ class MorningInsightGenerator:
         return "Name"
 
     def generate_memory_observation(self, checklist_items, strategic_goals,
-                                 journal_entries, calendar_events,
-                                 morning_insight, daily_briefing):
-    """
-    Ask Claude to write one concise memory entry summarising this run —
-    patterns, preferences, context useful for future runs.
-    """
-    ist = timezone(timedelta(hours=5, minutes=30))
-    run_date = datetime.now(ist).strftime("%Y-%m-%d")
-    active_goals = [g for g in strategic_goals if "In Progress" in g]
-    done_goals = [g for g in strategic_goals if "Done" in g]
-    journal_titles = [e['title'] for e in journal_entries[:4]]
-    calendar_summary = [f"{e['time']} {e['category']}: {e['summary']}" for e in calendar_events[:5]]
+                                     journal_entries, calendar_events,
+                                     morning_insight, daily_briefing):
+        """
+        Ask Claude to write one concise memory entry summarising this run —
+        patterns, preferences, context useful for future runs.
+        """
+        ist = timezone(timedelta(hours=5, minutes=30))
+        run_date = datetime.now(ist).strftime("%Y-%m-%d")
+        active_goals = [g for g in strategic_goals if "In Progress" in g]
+        done_goals = [g for g in strategic_goals if "Done" in g]
+        journal_titles = [e['title'] for e in journal_entries[:4]]
+        calendar_summary = [f"{e['time']} {e['category']}: {e['summary']}" for e in calendar_events[:5]]
 
-    prompt = f"""You are an AI agent maintaining a long-term memory log about the user.
+        prompt = f"""You are an AI agent maintaining a long-term memory log about the user.
 
 After today's run, write ONE concise memory entry (max 80 words, plain text, no headers) capturing:
 - Notable patterns, preferences, or context about the user visible today
-- Key goals and their EXACT progress percentages as listed below — do NOT round, estimate, or replace these numbers
+- Key goals and their status
 - Journal themes and what the user seems focused on
 - Any context useful for improving tomorrow's briefing
 
 Run date: {run_date}
-Active goals (copy the percentage exactly as shown): {'; '.join(active_goals[:4]) if active_goals else 'None'}
+Active goals: {'; '.join(active_goals[:4]) if active_goals else 'None'}
 Recently done goals: {'; '.join(done_goals[:3]) if done_goals else 'None'}
 Journal entries reviewed: {'; '.join(journal_titles)}
 Today's calendar: {'; '.join(calendar_summary)}
@@ -287,31 +287,30 @@ Pending tasks: {'; '.join(checklist_items[:4])}
 Morning insight generated: {morning_insight[:120]}
 Daily briefing focus: {daily_briefing[:200]}
 
-IMPORTANT: The progress percentages in "Active goals" are real values from Notion. Use them exactly as written (e.g. if a goal says "15%", write "15%" — never write "0%" for a goal that shows a non-zero percentage).
 Write a single plain-text paragraph. No labels, no markdown, no bullet points."""
 
-    try:
-        print("  🤖 Generating memory observation with Claude Sonnet 4.6...")
-        response = self.anthropic_client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=150,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        memory = "".join(
-            b.text for b in response.content if getattr(b, "type", None) == "text"
-        ).strip()
-        print("  ✅ Memory observation generated")
-        return memory
-    except Exception as e:
-        print(f"  ⚠️ Memory generation error: {e}")
-        ist = timezone(timedelta(hours=5, minutes=30))
-        return (
-            f"{datetime.now(ist).strftime('%Y-%m-%d')}: "
-            f"Active goals — {'; '.join(active_goals[:2]) if active_goals else 'None'}. "
-            f"Journal themes — {', '.join(journal_titles[:3])}. "
-            f"Pending tasks — {'; '.join(checklist_items[:3])}. "
-            f"Briefing generated successfully."
-        )
+        try:
+            print("  🤖 Generating memory observation with Claude Sonnet 4.6...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=150,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            memory = "".join(
+                b.text for b in response.content if getattr(b, "type", None) == "text"
+            ).strip()
+            print("  ✅ Memory observation generated")
+            return memory
+        except Exception as e:
+            print(f"  ⚠️ Memory generation error: {e}")
+            ist = timezone(timedelta(hours=5, minutes=30))
+            return (
+                f"{datetime.now(ist).strftime('%Y-%m-%d')}: "
+                f"Active goals — {'; '.join(active_goals[:2]) if active_goals else 'None'}. "
+                f"Journal themes — {', '.join(journal_titles[:3])}. "
+                f"Pending tasks — {'; '.join(checklist_items[:3])}. "
+                f"Briefing generated successfully."
+            )
 
     def save_agent_memory(self, observation):
         """
