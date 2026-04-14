@@ -274,7 +274,7 @@ class MorningInsightGenerator:
 
 After today's run, write ONE concise memory entry (max 80 words, plain text, no headers) capturing:
 - Notable patterns, preferences, or context about the user visible today
-- Key goals and their status
+- Key goals and their ACTUAL status and progress percentages as listed
 - Journal themes and what the user seems focused on
 - Any context useful for improving tomorrow's briefing
 
@@ -287,6 +287,7 @@ Pending tasks: {'; '.join(checklist_items[:4])}
 Morning insight generated: {morning_insight[:120]}
 Daily briefing focus: {daily_briefing[:200]}
 
+IMPORTANT: Use the exact progress percentages shown in the Active goals list above. Do NOT default to 0% unless the goal explicitly shows 0%.
 Write a single plain-text paragraph. No labels, no markdown, no bullet points."""
 
         try:
@@ -435,7 +436,7 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
         # Generate consolidated summary
         first_date = regular_entries[0]['created'] if regular_entries else cutoff_str
         last_date = regular_entries[-1]['created'] if regular_entries else cutoff_str
-        
+
         entries_text = ' | '.join([f"{e['created']}: {e['title'][:100]}" for e in regular_entries[:30]])
 
         consolidation_prompt = f"""Summarize these {len(regular_entries)} memory entries from {first_date} to {last_date} into ONE concise paragraph (max 150 words).
@@ -552,6 +553,12 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
           - All goals with Status = 'In progress'
           - Goals with Status = 'Done' AND last_edited_time within the last 7 days
         Prevents stale Done goals from appearing in the briefing.
+
+        NOTE on Progress field:
+          Notion stores the Progress property as a plain Number (e.g. 15 for 15%).
+          The Notion UI renders it with a "%" suffix via its Percent number format,
+          but the raw API value is always the whole integer (15, not 0.15).
+          We therefore read it directly with int() and clamp to [0, 100].
         """
         headers = {
             "Authorization": f"Bearer {self.notion_token}",
@@ -588,6 +595,7 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
         )
         if r.status_code != 200:
             raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
         goals = []
         for goal in r.json().get('results', []):
             try:
@@ -595,10 +603,13 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
                 if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
                     name = goal['properties']['Name']['title'][0]['plain_text']
 
-                # Progress is stored as a whole number in Notion's Percent format (15 = 15%)
+                # Progress is a whole integer from Notion's Percent-formatted Number field.
+                # e.g. Notion stores 15 when the user has entered 15% — never 0.15.
+                # Clamp to [0, 100] as a safety guard against unexpected values.
                 progress = 0
                 if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
-                    progress = min(100, max(0, int(goal['properties']['Progress']['number'])))
+                    raw = goal['properties']['Progress']['number']
+                    progress = min(100, max(0, int(raw)))
 
                 status = 'Unknown'
                 if 'Status' in goal['properties'] and goal['properties']['Status']['status']:
@@ -613,6 +624,8 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
         try:
             goals = self.notion_retry(self._query_strategic_goals)
             print(f"  Found {len(goals)} goals")
+            for g in goals:
+                print(f"    • {g}")
             return goals
         except Exception as e:
             print(f"❌ Strategic goals failed: {e}")
@@ -854,6 +867,7 @@ CRITICAL RULES:
 - ONLY reference information explicitly present in the DATA section above
 - Do NOT invent connections, metaphors, or context not directly stated in the data
 - If RECENTLY COMPLETED GOALS is "None", do not mention any completed goals
+- Use the EXACT progress percentages shown in ACTIVE GOALS — do not summarise them as 0%
 
 Create EXACTLY 5 brief numbered insights. Vary sentence structure — avoid starting every sentence with "You".
 
