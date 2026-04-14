@@ -594,12 +594,12 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
                 name = 'Untitled Goal'
                 if 'Name' in goal['properties'] and goal['properties']['Name']['title']:
                     name = goal['properties']['Name']['title'][0]['plain_text']
-                
-                # FIX: Progress is stored as decimal (0.11 = 11%), multiply by 100 before int()
+
+                # Progress is stored as a whole number in Notion's Percent format (15 = 15%)
                 progress = 0
                 if 'Progress' in goal['properties'] and goal['properties']['Progress']['number'] is not None:
-                    progress = int(goal['properties']['Progress']['number'] * 100)
-                
+                    progress = min(100, max(0, int(goal['properties']['Progress']['number'])))
+
                 status = 'Unknown'
                 if 'Status' in goal['properties'] and goal['properties']['Status']['status']:
                     status = goal['properties']['Status']['status']['name']
