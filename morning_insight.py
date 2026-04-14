@@ -304,4 +304,339 @@ Write a single plain-text paragraph. No labels, no markdown, no bullet points.""
             return memory
         except Exception as e:
             print(f"  ⚠️ Memory generation error: {e}")
-            ist = 
+            ist = timezone(timedelta(hours=5, minutes=30))
+            return f"Memory generation failed on {datetime.now(ist).strftime('%Y-%m-%d')}: {str(e)[:80]}"
+
+    def save_memory_to_notion(self, memory_text):
+        """Save one memory observation entry to AGENT_MEMORY_DB_ID."""
+        if not self.agent_memory_db_id:
+            print("  ⚠️ AGENT_MEMORY_DB_ID not set — skipping memory save")
+            return
+        try:
+            print("💾 Saving memory to Notion DB...")
+            title_prop = self.get_memory_db_title_property()
+            ist = timezone(timedelta(hours=5, minutes=30))
+            date_prefix = datetime.now(ist).strftime("%Y-%m-%d")
+            truncated = memory_text[:1900] if len(memory_text) > 1900 else memory_text
+            headers = {
+                "Authorization": f"Bearer {self.notion_token}",
+                "Content-Type": "application/json",
+                "Notion-Version": "2022-06-28"
+            }
+            payload = {
+                "parent": {"database_id": self.agent_memory_db_id},
+                "properties": {
+                    title_prop: {
+                        "title": [{"text": {"content": f"[{date_prefix}] {truncated}"}}]
+                    }
+                }
+            }
+            r = requests.post(
+                "https://api.notion.com/v1/pages",
+                headers=headers,
+                json=payload,
+                timeout=15
+            )
+            if r.status_code in (200, 201):
+                print("  ✅ Memory saved to Notion DB")
+            else:
+                print(f"  ⚠️ Memory save failed: HTTP {r.status_code} — {r.text[:200]}")
+        except Exception as e:
+            print(f"  ⚠️ Memory save error: {e}")
+
+    # ─── Notion Page Content ──────────────────────────────────────────────────
+
+    def _get_page_content(self, page_id):
+        """Fetch plain text content from a Notion page."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.get(
+            f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100",
+            headers=headers, timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        lines = []
+        for block in r.json().get('results', []):
+            btype = block.get('type', '')
+            bdata = block.get(btype, {})
+            rich = bdata.get('rich_text', [])
+            text = ''.join(t.get('plain_text', '') for t in rich)
+            if text.strip():
+                lines.append(text.strip())
+        return '\n'.join(lines)
+
+    # ─── Notion DB Queries ────────────────────────────────────────────────────
+
+    def _query_strategic_goals(self):
+        """Query strategic goals from Notion DB and return formatted strings."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.strategic_goals_db_id}/query",
+            headers=headers,
+            json={"page_size": 20},
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        goals = []
+        for goal in r.json().get('results', []):
+            try:
+                props = goal.get('properties', {})
+
+                # Title
+                name = ''
+                for key in ['Name', 'Goal', 'Title']:
+                    if key in props and props[key].get('title'):
+                        name = props[key]['title'][0]['plain_text']
+                        break
+
+                # Status
+                status = 'Unknown'
+                if 'Status' in props:
+                    s = props['Status']
+                    if s.get('status'):
+                        status = s['status'].get('name', 'Unknown')
+                    elif s.get('select'):
+                        status = s['select'].get('name', 'Unknown')
+
+                # Progress — handle both decimal (0.15) and integer (15) storage
+                progress = 0
+                if 'Progress' in props and props['Progress'].get('number') is not None:
+                    raw = props['Progress']['number']
+                    # If stored as decimal fraction (e.g. 0.15 = 15%)
+                    if isinstance(raw, float) and raw <= 1.0:
+                        progress = int(raw * 100)
+                    else:
+                        # Already an integer percent (e.g. 15 = 15%)
+                        progress = int(raw)
+                    progress = min(100, max(0, progress))
+
+                # Status emoji
+                if status in ('Done', 'Complete', 'Completed'):
+                    emoji = '✅'
+                elif status in ('In Progress', 'In progress'):
+                    emoji = '🔄'
+                elif status in ('Not started', 'Not Started', 'Todo', 'To Do'):
+                    emoji = '⏳'
+                else:
+                    emoji = '📌'
+
+                if name:
+                    goals.append(f"{name} ({progress}% — {emoji} {status})")
+            except Exception:
+                pass
+        return goals
+
+    def get_strategic_goals(self):
+        """Fetch strategic goals from Notion DB."""
+        if not self.strategic_goals_db_id:
+            print("  ⚠️ STRATEGIC_GOALS_DB_ID not set — skipping")
+            return []
+        try:
+            print("🎯 Reading Strategic Goals DB...")
+            goals = self.notion_retry(self._query_strategic_goals)
+            print(f"  ✅ Loaded {len(goals)} goals")
+            return goals
+        except Exception as e:
+            print(f"  ⚠️ Could not load Strategic Goals: {e}")
+            return []
+
+    def _query_journal_entries(self):
+        """Query recent journal entries from Notion DB."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query",
+            headers=headers,
+            json={
+                "sorts": [{"property": "Created time", "direction": "descending"}],
+                "page_size": 5
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        entries = []
+        for entry in r.json().get('results', []):
+            try:
+                props = entry.get('properties', {})
+                title = ''
+                for key in ['Name', 'Title', 'Date']:
+                    if key in props and props[key].get('title'):
+                        title = props[key]['title'][0]['plain_text']
+                        break
+                page_id = entry.get('id', '')
+                content = ''
+                if page_id:
+                    try:
+                        content = self._get_page_content(page_id)[:500]
+                    except Exception:
+                        pass
+                if title:
+                    entries.append({'title': title, 'content': content})
+            except Exception:
+                pass
+        return entries
+
+    def get_journal_entries(self):
+        """Fetch recent journal entries from Notion DB."""
+        if not self.daily_journal_db_id:
+            print("  ⚠️ DAILY_JOURNAL_DB_ID not set — skipping")
+            return []
+        try:
+            print("📔 Reading Journal DB...")
+            entries = self.notion_retry(self._query_journal_entries)
+            print(f"  ✅ Loaded {len(entries)} journal entries")
+            return entries
+        except Exception as e:
+            print(f"  ⚠️ Could not load Journal: {e}")
+            return []
+
+    def _query_checklist_items(self):
+        """Query pending checklist items from Notion DB."""
+        headers = {
+            "Authorization": f"Bearer {self.notion_token}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28"
+        }
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{self.weekly_checklist_db_id}/query",
+            headers=headers,
+            json={
+                "filter": {
+                    "property": "Done",
+                    "checkbox": {"equals": False}
+                },
+                "page_size": 10
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            raise Exception(f"HTTP {r.status_code}: {r.text[:200]}")
+
+        items = []
+        for item in r.json().get('results', []):
+            try:
+                props = item.get('properties', {})
+                name = ''
+                for key in ['Name', 'Task', 'Title']:
+                    if key in props and props[key].get('title'):
+                        name = props[key]['title'][0]['plain_text']
+                        break
+                if name:
+                    items.append(name)
+            except Exception:
+                pass
+        return items
+
+    def get_checklist_items(self):
+        """Fetch pending checklist items from Notion DB."""
+        if not self.weekly_checklist_db_id:
+            print("  ⚠️ WEEKLY_CHECKLIST_DB_ID not set — skipping")
+            return []
+        try:
+            print("✅ Reading Checklist DB...")
+            items = self.notion_retry(self._query_checklist_items)
+            print(f"  ✅ Loaded {len(items)} pending tasks")
+            return items
+        except Exception as e:
+            print(f"  ⚠️ Could not load Checklist: {e}")
+            return []
+
+    # ─── Claude AI Generation ─────────────────────────────────────────────────
+
+    def generate_morning_insight(self, agent_instructions, agent_memories,
+                                  journal_entries, calendar_events):
+        """Generate the ☀️ Morning Insight callout content."""
+        memory_context = '\n'.join(agent_memories[-5:]) if agent_memories else 'No previous memories.'
+        journal_context = '\n'.join(
+            f"- {e['title']}: {e['content'][:200]}" for e in journal_entries[:3]
+        ) if journal_entries else 'No recent journal entries.'
+        calendar_context = '\n'.join(
+            f"- {e['time']} [{e['category']}]: {e['summary']}" for e in calendar_events[:5]
+        ) if calendar_events else 'No events today.'
+
+        system_prompt = agent_instructions if agent_instructions else (
+            "You are a personal morning insight assistant. Be concise, warm, and practical."
+        )
+
+        user_prompt = f"""Generate a morning insight with exactly 2 parts:
+
+PART 1 — STOIC REMINDER (2-3 sentences):
+A brief Stoic principle or quote relevant to the user's current context. Make it personal and actionable.
+
+PART 2 — JOURNAL PROMPT (1 question):
+A single reflective question based on recent journal themes or today's schedule.
+
+Context:
+Recent memories: {memory_context}
+Recent journal: {journal_context}
+Today's schedule: {calendar_context}
+Current time: {self.get_current_ist_time()}
+
+Format output as:
+☀️ STOIC REMINDER
+[your 2-3 sentences here]
+
+✍️ JOURNAL PROMPT
+[your single question here]"""
+
+        try:
+            print("  🤖 Generating Morning Insight with Claude...")
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=300,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}]
+            )
+            result = "".join(
+                b.text for b in response.content if getattr(b, "type", None) == "text"
+            ).strip()
+            print("  ✅ Morning Insight generated")
+            return result
+        except Exception as e:
+            print(f"  ⚠️ Morning Insight generation error: {e}")
+            return f"☀️ STOIC REMINDER\nFocus on what you can control today.\n\n✍️ JOURNAL PROMPT\nWhat is the one thing you want to accomplish today?"
+
+    def generate_daily_briefing(self, agent_instructions, agent_memories,
+                                 strategic_goals, checklist_items,
+                                 journal_entries, calendar_events):
+        """Generate the 🌅 Daily Insight callout content."""
+        memory_context = '\n'.join(agent_memories[-5:]) if agent_memories else 'No previous memories.'
+        goals_context = '\n'.join(f"- {g}" for g in strategic_goals) if strategic_goals else 'No active goals.'
+        tasks_context = '\n'.join(f"- {t}" for t in checklist_items[:6]) if checklist_items else 'No pending tasks.'
+        journal_context = '\n'.join(
+            f"- {e['title']}: {e['content'][:200]}" for e in journal_entries[:3]
+        ) if journal_entries else 'No recent journal entries.'
+        calendar_context = '\n'.join(
+            f"- {e['time']} [{e['category']}]: {e['summary']}" for e in calendar_events[:8]
+        ) if calendar_events else 'No events today.'
+
+        system_prompt = agent_instructions if agent_instructions else (
+            "You are a strategic daily briefing assistant. Be concise, insightful, and actionable."
+        )
+
+        user_prompt = f"""Generate a daily strategic briefing with exactly 5 parts:
+
+1. GOAL PULSE (2-3 sentences): Status of active strategic goals, highlighting momentum or blockers.
+2. TODAY'S FOCUS (2-3 sentences): Key priorities based on calendar and pending tasks.
+3. PATTERN INSIGHT (2 sentences): A notable pattern or theme from recent journal entries.
+4. ENERGY FORECAST (1-2 sentences): Predicted energy/focus level based on today's schedule mix.
+5. ONE BIG WIN (1 sentence): The single most impactful thing to accomplish today.
+
+Data:
+Strategic goals: {goals_context}
+Pending tasks: 
