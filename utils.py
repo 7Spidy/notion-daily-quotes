@@ -98,11 +98,14 @@ class NotionClient:
     VERSION = "2022-06-28"
 
     def __init__(self):
+        # Hard fail — every run type needs these two
         self.token                  = os.environ["NOTION_API_KEY"]
-        self.page_id                = os.environ["NOTION_PAGE_ID"]
         self.weekly_checklist_db_id = os.environ["WEEKLY_CHECKLIST_DB_ID"]
-        self.strategic_goals_db_id  = os.environ["STRATEGIC_GOALS_DB_ID"]
-        self.daily_journal_db_id    = os.environ["DAILY_JOURNAL_DB_ID"]
+        # Soft fail — not every run type needs these; missing = empty string, not crash
+        # (e.g. evening run doesn't need page_id at init but may write to it later)
+        self.page_id                = os.getenv("NOTION_PAGE_ID", "")
+        self.strategic_goals_db_id  = os.getenv("STRATEGIC_GOALS_DB_ID", "")
+        self.daily_journal_db_id    = os.getenv("DAILY_JOURNAL_DB_ID", "")
         self.agent_memory_page_id   = os.getenv("AGENT_MEMORY_PAGE_ID", "")
         self.agent_memory_db_id     = os.getenv("AGENT_MEMORY_DB_ID", "")
 
