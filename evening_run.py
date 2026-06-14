@@ -3,25 +3,25 @@
 """
 evening_run.py — 7 PM IST daily run
 
-One job: send an evening wrap-up to Discord that:
-  - Celebrates what was completed today
-  - Notes anything still open (for tomorrow, not as guilt)
-  - Reminds you that your 8 PM journal entry is due
-  - Gives a journal prompt relevant to today
+Two outputs:
+  1. Discord message — evening wrap-up with completed/pending tasks + journal reminder
+  2. Notion callout — 🌙 Evening Summary block on the dashboard page (same content)
 
-Lightweight by design. No Orchestrator, no Notion writes.
-The evening journal entry itself will be picked up in tomorrow's 3 AM context synthesis.
+Bugs fixed:
+  - CalendarClient was imported but never used (removed)
+  - NotionClient() crashed because NOTION_PAGE_ID was missing from the workflow env
+    (fixed in utils.py __init__ — now uses os.getenv with empty string default)
+  - No Notion write at 7 PM existed at all (added below)
 """
 
-from utils import NotionClient, CalendarClient, DiscordClient, format_ist, get_ist_now
+from utils import NotionClient, DiscordClient, format_ist, get_ist_now
 from agents import NudgeAgent
 
 
 def run():
-    notion   = NotionClient()
-    calendar = CalendarClient()
-    discord  = DiscordClient()
-    now      = get_ist_now()
+    notion  = NotionClient()
+    discord = DiscordClient()
+    now     = get_ist_now()
 
     print(f"\n{'═'*60}")
     print(f"  Life OS · Evening Run (7 PM IST)")
@@ -31,13 +31,13 @@ def run():
     # ── Load instructions ──────────────────────────────────────────────────────
     ai_instructions = notion.get_agent_instructions()
 
-    # ── Fetch data ─────────────────────────────────────────────────────────────
+    # ── Fetch task data ────────────────────────────────────────────────────────
     print("📋 Checking task status…")
     pending_tasks   = notion.get_pending_tasks()
     completed_today = notion.get_tasks_completed_last_24h()
     print(f"  Pending: {len(pending_tasks)} | Completed today: {len(completed_today)}")
 
-    # ── Generate and send evening nudge ───────────────────────────────────────
+    # ── Generate evening wrap-up message ───────────────────────────────────────
     print("\n🤖 Generating evening wrap-up…")
     nudge_agent = NudgeAgent()
     message = nudge_agent.run_evening(
@@ -46,16 +46,37 @@ def run():
         ai_instructions = ai_instructions,
     )
 
+    # ── Send to Discord ────────────────────────────────────────────────────────
+    print("\n💬 Sending to Discord…")
     discord.send(message)
 
-    # ── Save a brief evening memory observation ────────────────────────────────
-    # This captures the day's completion status — useful context for tomorrow's run.
+    # ── Write to Notion dashboard ──────────────────────────────────────────────
+    # Writes the same content as the Discord message into a 🌙 callout block on
+    # the dashboard page. This is the Notion alert the user expected at 7 PM.
+    print("\n📝 Writing evening summary to Notion…")
+    if notion.page_id:
+        existing_evening_id = notion.find_block_by_marker("🌙 Evening Summary")
+        notion.write_callout(
+            content     = message,
+            emoji       = "🌙",
+            color       = "purple_background",
+            marker      = "🌙 Evening Summary",
+            existing_id = existing_evening_id,
+        )
+    else:
+        print("  ⚠️  NOTION_PAGE_ID not set — skipping Notion write")
+
+    # ── Save brief memory observation ─────────────────────────────────────────
     if completed_today:
-        completed_summary = f"Completed {len(completed_today)} task(s): {', '.join(completed_today[:3])}"
-        pending_summary   = f"{len(pending_tasks)} still open" if pending_tasks and pending_tasks != ['No pending tasks'] else "all clear"
+        pending_note = (
+            f"{len(pending_tasks)} still open"
+            if pending_tasks and pending_tasks != ["No pending tasks"]
+            else "all clear"
+        )
         observation = (
-            f"{now.strftime('%Y-%m-%d')} evening: {completed_summary}. "
-            f"Task status at 7PM — {pending_summary}."
+            f"{now.strftime('%Y-%m-%d')} evening: Completed "
+            f"{len(completed_today)} task(s): {', '.join(completed_today[:3])}. "
+            f"Task status at 7 PM — {pending_note}."
         )
         notion.save_memory(
             memory_text = observation,
