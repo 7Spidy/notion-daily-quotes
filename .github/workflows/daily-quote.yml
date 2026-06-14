@@ -19,7 +19,7 @@ on:
           - evening
 
 jobs:
-  # ── Determine which run to execute ────────────────────────────────────────h
+  # ── Determine which run to execute ────────────────────────────────────────
   # GitHub doesn't expose WHICH cron triggered the run, so we check the current
   # UTC hour to figure it out. Manual workflow_dispatch uses the input directly.
   run-life-os:
@@ -88,10 +88,7 @@ jobs:
           GOOGLE_CREDENTIALS:      ${{ secrets.GOOGLE_CREDENTIALS }}
           GOOGLE_CALENDAR_ID:      ${{ secrets.GOOGLE_CALENDAR_ID }}
           WEEKLY_CHECKLIST_DB_ID:  ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
-          STRATEGIC_GOALS_DB_ID:   ${{ secrets.STRATEGIC_GOALS_DB_ID }}
-          DAILY_JOURNAL_DB_ID:     ${{ secrets.DAILY_JOURNAL_DB_ID }}
           AGENT_MEMORY_PAGE_ID:    ${{ secrets.AGENT_MEMORY_PAGE_ID }}
-          AGENT_MEMORY_DB_ID:      ${{ secrets.AGENT_MEMORY_DB_ID }}
           DISCORD_WEBHOOK_URL:     ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python midday_run.py
 
@@ -100,6 +97,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
           NOTION_API_KEY:          ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID:          ${{ secrets.NOTION_PAGE_ID }}
           WEEKLY_CHECKLIST_DB_ID:  ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
           AGENT_MEMORY_PAGE_ID:    ${{ secrets.AGENT_MEMORY_PAGE_ID }}
           AGENT_MEMORY_DB_ID:      ${{ secrets.AGENT_MEMORY_DB_ID }}
