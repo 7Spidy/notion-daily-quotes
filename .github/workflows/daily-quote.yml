@@ -1,36 +1,104 @@
-name: Daily Automation Suite
+name: Life OS Daily Automation
 
 on:
   schedule:
-    - cron: '0 19 * * *'  # 12:30 AM IST (7:00 PM UTC)
-  workflow_dispatch:
+    # All times in UTC. IST = UTC + 5:30
+    - cron: '30 21 * * *'   # 3:00 AM IST  → main morning briefing
+    - cron: '30 7 * * *'    # 1:00 PM IST  → midday nudge + calendar blocking
+    - cron: '30 13 * * *'   # 7:00 PM IST  → evening wrap-up
+  workflow_dispatch:         # Manual trigger from GitHub UI (useful for testing)
+    inputs:
+      run_type:
+        description: 'Which run to trigger'
+        required: true
+        default: 'morning'
+        type: choice
+        options:
+          - morning
+          - midday
+          - evening
 
 jobs:
-  morning-insight:
-    name: Generate Morning Insight
+  # ── Determine which run to execute ────────────────────────────────────────
+  # GitHub doesn't expose WHICH cron triggered the run, so we check the current
+  # UTC hour to figure it out. Manual workflow_dispatch uses the input directly.
+  run-life-os:
+    name: Life OS Automation
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install anthropic requests PyJWT cryptography
+        run: |
+          pip install anthropic requests PyJWT cryptography
 
-      - name: Generate Morning Insight
+      - name: Determine run type
+        id: which_run
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "type=${{ github.event.inputs.run_type }}" >> $GITHUB_OUTPUT
+          else
+            # Check UTC hour to determine run type
+            HOUR=$(date -u +%H)
+            MINUTE=$(date -u +%M)
+            echo "UTC time: $HOUR:$MINUTE"
+            if [ "$HOUR" = "21" ]; then
+              echo "type=morning" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "07" ]; then
+              echo "type=midday" >> $GITHUB_OUTPUT
+            elif [ "$HOUR" = "13" ]; then
+              echo "type=evening" >> $GITHUB_OUTPUT
+            else
+              echo "type=morning" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Echo run type
+        run: echo "Running → ${{ steps.which_run.outputs.type }}"
+
+      - name: Run morning (3 AM IST)
+        if: steps.which_run.outputs.type == 'morning'
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
-          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          GOOGLE_CALENDAR_ID: ${{ secrets.GOOGLE_CALENDAR_ID }}
-          WEEKLY_CHECKLIST_DB_ID: ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
-          STRATEGIC_GOALS_DB_ID: ${{ secrets.STRATEGIC_GOALS_DB_ID }}
-          DAILY_JOURNAL_DB_ID: ${{ secrets.DAILY_JOURNAL_DB_ID }}
-          AGENT_MEMORY_PAGE_ID: ${{ secrets.AGENT_MEMORY_PAGE_ID }}
-          AGENT_MEMORY_DB_ID: ${{ secrets.AGENT_MEMORY_DB_ID }}
-        run: python morning_insight.py
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY:          ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID:          ${{ secrets.NOTION_PAGE_ID }}
+          GOOGLE_CREDENTIALS:      ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CALENDAR_ID:      ${{ secrets.GOOGLE_CALENDAR_ID }}
+          WEEKLY_CHECKLIST_DB_ID:  ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
+          STRATEGIC_GOALS_DB_ID:   ${{ secrets.STRATEGIC_GOALS_DB_ID }}
+          DAILY_JOURNAL_DB_ID:     ${{ secrets.DAILY_JOURNAL_DB_ID }}
+          AGENT_MEMORY_PAGE_ID:    ${{ secrets.AGENT_MEMORY_PAGE_ID }}
+          AGENT_MEMORY_DB_ID:      ${{ secrets.AGENT_MEMORY_DB_ID }}
+          DISCORD_WEBHOOK_URL:     ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python morning_run.py
+
+      - name: Run midday (1 PM IST)
+        if: steps.which_run.outputs.type == 'midday'
+        env:
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY:          ${{ secrets.NOTION_API_KEY }}
+          NOTION_PAGE_ID:          ${{ secrets.NOTION_PAGE_ID }}
+          GOOGLE_CREDENTIALS:      ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_CALENDAR_ID:      ${{ secrets.GOOGLE_CALENDAR_ID }}
+          WEEKLY_CHECKLIST_DB_ID:  ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
+          AGENT_MEMORY_PAGE_ID:    ${{ secrets.AGENT_MEMORY_PAGE_ID }}
+          DISCORD_WEBHOOK_URL:     ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python midday_run.py
+
+      - name: Run evening (7 PM IST)
+        if: steps.which_run.outputs.type == 'evening'
+        env:
+          ANTHROPIC_API_KEY:       ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY:          ${{ secrets.NOTION_API_KEY }}
+          WEEKLY_CHECKLIST_DB_ID:  ${{ secrets.WEEKLY_CHECKLIST_DB_ID }}
+          AGENT_MEMORY_PAGE_ID:    ${{ secrets.AGENT_MEMORY_PAGE_ID }}
+          AGENT_MEMORY_DB_ID:      ${{ secrets.AGENT_MEMORY_DB_ID }}
+          DISCORD_WEBHOOK_URL:     ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python evening_run.py
