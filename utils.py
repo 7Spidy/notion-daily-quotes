@@ -858,12 +858,16 @@ class CalendarClient:
             events = []
             for event in r.json().get("items", []):
                 start = event.get("start", {})
-                dt = start.get("dateTime", start.get("date", ""))
-                time_str = dt.split("T")[1][:5] if "T" in dt else "All day"
+                end   = event.get("end", {})
+                start_dt = start.get("dateTime", start.get("date", ""))
+                end_dt   = end.get("dateTime", end.get("date", ""))
+                time_str = start_dt.split("T")[1][:5] if "T" in start_dt else "All day"
+                end_str  = end_dt.split("T")[1][:5]   if "T" in end_dt   else "All day"
                 color_id = str(event.get("colorId", ""))
                 emoji, label = CALENDAR_COLOR_MAP.get(color_id, ("⚪", "Other"))
                 events.append({
                     "time":     time_str,
+                    "end_time": end_str,
                     "summary":  event.get("summary", "No title"),
                     "category": f"{emoji} {label}",
                 })
@@ -873,44 +877,64 @@ class CalendarClient:
 
     def get_vacant_slots(self, events: list[dict], workday_start: int = 9, workday_end: int = 19) -> list[dict]:
         """
-        NEW: Computes free time blocks during the workday.
-
-        Returns slots of at least 60 minutes:
-        [{"start": "10:00", "end": "12:00", "duration_h": 2.0}]
+        Computes genuinely free blocks (>=60 min) during the workday using each
+        event's REAL start and end time, merging overlapping events so a long
+        block counts as one occupied span.
         """
-        # Parse event start times into minutes-since-midnight
-        timed = []
+        def to_min(hhmm):
+            h, m = map(int, hhmm.split(":"))
+            return h * 60 + m
+
+        # Build real busy intervals [start, end) in minutes
+        busy = []
         for e in events:
-            if e["time"] not in ("All day", "N/A"):
-                try:
-                    h, m = map(int, e["time"].split(":"))
-                    timed.append(h * 60 + m)
-                except ValueError:
-                    pass
-        timed.sort()
+            if e["time"] in ("All day", "N/A"):
+                continue
+            try:
+                s = to_min(e["time"])
+            except ValueError:
+                continue
+            end_str = e.get("end_time", "")
+            try:
+                en = to_min(end_str) if end_str and end_str not in ("All day", "N/A") else s + 60
+            except ValueError:
+                en = s + 60
+            if en <= s:                     # guard against bad/zero-length events
+                en = s + 60
+            busy.append((s, en))
 
+        busy.sort()
+
+        # Merge overlapping/adjacent busy intervals
+        merged = []
+        for s, en in busy:
+            if merged and s <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], en))
+            else:
+                merged.append((s, en))
+
+        # Walk the workday, emitting gaps of >=60 min
         vacant = []
-        prev_end = workday_start * 60  # Treat events as ~60 min by default
+        cursor  = workday_start * 60
+        day_end = workday_end * 60
 
-        for start in timed:
-            if start > workday_end * 60:
+        for s, en in merged:
+            if s > day_end:
                 break
-            gap = start - prev_end
-            if gap >= 60:
+            free_until = min(s, day_end)
+            if free_until - cursor >= 60:
                 vacant.append({
-                    "start":      f"{prev_end // 60:02d}:{prev_end % 60:02d}",
-                    "end":        f"{start // 60:02d}:{start % 60:02d}",
-                    "duration_h": round(gap / 60, 1),
+                    "start":      f"{cursor // 60:02d}:{cursor % 60:02d}",
+                    "end":        f"{free_until // 60:02d}:{free_until % 60:02d}",
+                    "duration_h": round((free_until - cursor) / 60, 1),
                 })
-            prev_end = max(prev_end, start + 60)
+            cursor = max(cursor, en)
 
-        # Gap after last event
-        remaining = workday_end * 60 - prev_end
-        if remaining >= 60:
+        if day_end - cursor >= 60:
             vacant.append({
-                "start":      f"{prev_end // 60:02d}:{prev_end % 60:02d}",
+                "start":      f"{cursor // 60:02d}:{cursor % 60:02d}",
                 "end":        f"{workday_end:02d}:00",
-                "duration_h": round(remaining / 60, 1),
+                "duration_h": round((day_end - cursor) / 60, 1),
             })
 
         return vacant
