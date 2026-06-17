@@ -148,6 +148,21 @@ def run():
         existing_id = briefing_block_id,
     )
 
+    # Freeze the journal prompt into today's Daily Journal entry.
+    # The homepage callout above still receives the full morning_insight string
+    # (stoic line + prompt) unchanged. Here we extract only the prompt half so
+    # the journal page gets a clean, standalone prompt rather than the full text.
+    PROMPT_MARKER = "📝 Journal Prompt:"
+    morning_insight_text = final["morning_insight"]
+    if PROMPT_MARKER in morning_insight_text:
+        _, after_marker = morning_insight_text.split(PROMPT_MARKER, 1)
+        journal_prompt = f"{PROMPT_MARKER}{after_marker.rstrip()}"
+    else:
+        journal_prompt = morning_insight_text  # fallback: whole string if marker absent
+
+    print("\n📝 Freezing journal prompt into today's Daily Journal entry…")
+    notion.freeze_prompt_into_journal(journal_prompt)
+
     # Write calendar block suggestions if the planning agent found any
     if plan["calendar_suggestions"]:
         print(f"\n📅 Writing {len(plan['calendar_suggestions'])} calendar suggestion(s) to Notion…")

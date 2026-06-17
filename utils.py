@@ -373,6 +373,9 @@ class NotionClient:
         instead of just 'date' (e.g., "2026-06-14"). This label is what gets passed
         to Claude, giving it proper temporal context.
         """
+        # TODO: On days the user skips journaling the auto-created template page is
+        # near-empty but still gets pulled into this 7-day context window. Filtering
+        # those stub pages out has been deferred — accepted tradeoff for now.
         cutoff = (get_ist_now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
 
         def _query():
@@ -426,15 +429,18 @@ class NotionClient:
 
     # ── Read / Write: Blocks on Main Page ────────────────────────────────────
 
-    def find_block_by_marker(self, marker: str) -> str | None:
+    def find_block_by_marker(self, marker: str, page_id: str | None = None) -> str | None:
         """
-        Finds a callout block whose text STARTS WITH the marker string.
-        We now write the marker at the very start of each callout so it's
-        never cut off by the 1900-char truncation.
+        Finds a callout block whose text CONTAINS the marker string.
+        For homepage callouts the marker is always at the top (written there by
+        write_callout), so contains == startswith in practice.
+        page_id defaults to self.page_id for backward compatibility; pass an
+        explicit page_id to search a different page (e.g. a journal entry).
         """
+        target_page = page_id or self.page_id
         try:
             r = requests.get(
-                f"https://api.notion.com/v1/blocks/{self.page_id}/children",
+                f"https://api.notion.com/v1/blocks/{target_page}/children",
                 headers=self._h, timeout=10
             )
             if r.status_code != 200:
@@ -444,7 +450,7 @@ class NotionClient:
                     continue
                 rt = block["callout"].get("rich_text", [])
                 text = "".join(t.get("plain_text", "") for t in rt)
-                if text.startswith(marker):
+                if marker in text:
                     return block["id"]
         except Exception as e:
             print(f"  ⚠️  Block search failed ({marker}): {e}")
@@ -498,6 +504,91 @@ class NotionClient:
             print(f"  ✅ {emoji} Callout {action}")
         except Exception as e:
             print(f"  ❌ Callout write failed ({emoji}): {e}")
+
+    def freeze_prompt_into_journal(self, prompt_text: str):
+        """
+        Writes today's journal prompt into the current day's Daily Journal page,
+        replacing the placeholder callout text. Once patched, nothing later can
+        change it — there is no sync link, just a one-time direct block update.
+
+        Safe to call even when no page exists yet: retries 3 times with
+        increasing delays, then logs a warning and returns without raising.
+        The homepage callout already has the prompt regardless.
+        """
+        if not self.daily_journal_db_id:
+            print("  ⚠️  DAILY_JOURNAL_DB_ID not set — skipping journal prompt freeze")
+            return
+
+        now = get_ist_now()
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        PLACEHOLDER = "Prompt loads here automatically"
+
+        def _query_today_page():
+            r = requests.post(
+                f"https://api.notion.com/v1/databases/{self.daily_journal_db_id}/query",
+                headers=self._h,
+                json={
+                    "filter": {
+                        "property": "Created time",
+                        "created_time": {"on_or_after": today_midnight}
+                    },
+                    "sorts": [{"property": "Created time", "direction": "descending"}],
+                    "page_size": 1
+                },
+                timeout=10
+            )
+            if r.status_code != 200:
+                raise Exception(f"HTTP {r.status_code}")
+            results = r.json().get("results", [])
+            return results[0]["id"] if results else None
+
+        # Retry when the template hasn't created the page yet (empty result ≠ error)
+        journal_page_id = None
+        for attempt in range(1, 4):
+            try:
+                journal_page_id = self._retry(_query_today_page)
+            except Exception as e:
+                print(f"  ⚠️  Journal page query failed: {e}")
+                break
+            if journal_page_id:
+                break
+            if attempt < 3:
+                wait = 10 * attempt
+                print(f"  ⚠️  No journal page for today yet — retry {attempt}/3 in {wait}s")
+                time.sleep(wait)
+
+        if not journal_page_id:
+            print("  ⚠️  No Daily Journal page found for today — skipping prompt freeze")
+            return
+
+        # Locate the placeholder callout inside that page
+        placeholder_block_id = self.find_block_by_marker(PLACEHOLDER, page_id=journal_page_id)
+
+        if not placeholder_block_id:
+            print(f"  ⚠️  Placeholder not found on journal page — user may have edited it already")
+            return
+
+        # Patch only rich_text; omitting icon lets Notion keep whatever the template set
+        sanitized = self._sanitize(prompt_text)
+        payload = {
+            "callout": {
+                "rich_text": [{"type": "text", "text": {"content": sanitized}}],
+            }
+        }
+
+        def _patch():
+            r = requests.patch(
+                f"https://api.notion.com/v1/blocks/{placeholder_block_id}",
+                headers=self._h, json=payload, timeout=15
+            )
+            if r.status_code != 200:
+                raise Exception(f"HTTP {r.status_code}: {r.text[:150]}")
+
+        try:
+            self._retry(_patch)
+            print("  ✅ 📝 Journal prompt frozen into today's entry")
+        except Exception as e:
+            print(f"  ⚠️  Journal prompt freeze failed: {e}")
 
     def get_block_comments(self, block_id: str) -> list[str]:
         """User comments on a block — used as feedback to adjust AI output."""
