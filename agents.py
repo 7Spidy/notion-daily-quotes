@@ -10,9 +10,6 @@ to let each agent build on the previous one's output.
 Flow per morning run:
   Orchestrator → Context Agent → Planning Agent → Review Agent
 
-Flow per midday/evening run:
-  Nudge Agent (standalone, no orchestration needed)
-
 Flow on Sundays (in addition to morning run):
   Tech Audit Agent
 """
@@ -200,7 +197,6 @@ class PlanningAgent:
         Returns a dict with:
           morning_insight: str
           daily_briefing: str
-          calendar_suggestions: list of {title, start, end}
         """
         calendar_lines = "\n".join(
             f"  {e['time']} {e['category']}: {e['summary']}"
@@ -255,19 +251,11 @@ Under 850 characters total. Vary sentence structure.
 4. How to use vacant time slots (be specific with times from VACANT SLOTS)
 5. ONE relaxing or enjoyable activity suggestion
 
-═══ PART 3 — CALENDAR SUGGESTIONS (JSON) ═══
-Based on the vacant slots and pending tasks, suggest 1-3 calendar blocks.
-Format as valid JSON (no markdown code blocks):
-{{"suggestions": [{{"title": "Task name", "start": "HH:MM", "end": "HH:MM"}}]}}
-If no suitable slots, return: {{"suggestions": []}}
-
 Output exactly this structure:
 MORNING_INSIGHT:
 [content]
 ---BRIEFING---
-[5-part briefing content]
----SUGGESTIONS---
-[JSON]"""
+[5-part briefing content]"""
 
         raw = _call_claude(
             prompt,
@@ -280,40 +268,23 @@ MORNING_INSIGHT:
 
     def _parse_output(self, raw: str, day_of_year: int, current_year: int) -> dict:
         """Parses the Planning Agent's structured output into components."""
-        import json as _json
 
         result = {
             "morning_insight": "",
             "daily_briefing": "",
-            "calendar_suggestions": [],
         }
 
         if not raw:
             return result
 
-        # Split on section markers
+        # Split on section marker
         parts = raw.split("---BRIEFING---")
         if len(parts) >= 1:
             insight_part = parts[0].replace("MORNING_INSIGHT:", "").strip()
             result["morning_insight"] = insight_part
 
         if len(parts) >= 2:
-            briefing_and_suggestions = parts[1].split("---SUGGESTIONS---")
-            result["daily_briefing"] = briefing_and_suggestions[0].strip()
-
-            if len(briefing_and_suggestions) >= 2:
-                json_str = briefing_and_suggestions[1].strip()
-                try:
-                    data = _json.loads(json_str)
-                    result["calendar_suggestions"] = data.get("suggestions", [])
-                except _json.JSONDecodeError:
-                    # Planning agent may have wrapped in backticks despite instructions
-                    json_clean = re.sub(r'```[a-z]*', '', json_str).strip()
-                    try:
-                        data = _json.loads(json_clean)
-                        result["calendar_suggestions"] = data.get("suggestions", [])
-                    except Exception:
-                        pass
+            result["daily_briefing"] = parts[1].strip()
 
         # Fallback if parsing failed
         if not result["morning_insight"]:
@@ -331,119 +302,6 @@ MORNING_INSIGHT:
                 "5. End the day with something you genuinely enjoy."
             )
 
-        return result
-
-
-import re  # needed for calendar suggestion JSON cleanup
-
-
-# ─── Nudge Agent ──────────────────────────────────────────────────────────────
-
-class NudgeAgent:
-    """
-    Generates Discord nudges for midday (1 PM) and evening (7 PM) runs.
-
-    Midday nudge: checks if tasks that were pending this morning are still pending.
-    Evening nudge: summarises the day and previews tomorrow.
-
-    Deliberately lightweight — no Orchestrator, no Context Agent.
-    The nudge is fast and focused.
-    """
-
-    def run_midday(
-        self,
-        pending_tasks: list[str],
-        completed_today: list[str],
-        remaining_events: list[dict],
-        ai_instructions: str,
-    ) -> str:
-        """
-        THE CORE PROACTIVE NUDGE.
-
-        If tasks were pending this morning and are STILL pending at 1 PM,
-        Claude calls it out with a specific, actionable suggestion.
-        """
-        now = get_ist_now()
-        remaining = "\n".join(
-            f"  {e['time']} {e['category']}: {e['summary']}"
-            for e in remaining_events
-            if e['time'] != 'N/A' and e['time'] > now.strftime('%H:%M')
-        ) or "  Nothing else scheduled"
-
-        prompt = f"""You are the Midday Nudge Agent for Avinash's Life OS.
-It is {now.strftime('%I:%M %p')} IST.
-
-COMPLETED TODAY (last 24h): {', '.join(completed_today) if completed_today else 'None yet'}
-STILL PENDING: {', '.join(pending_tasks) if pending_tasks else 'All clear'}
-REST OF TODAY'S CALENDAR:
-{remaining}
-
-Write a Discord message (under 180 words) that:
-- Opens with "🔔 Midday Check-In · {now.strftime('%I:%M %p')}"
-- Shows completed tasks with ✅ (if any)
-- Calls out pending tasks with ⏳ — be specific, name them
-- Shows remaining calendar events with 📅
-- Gives ONE specific, time-aware suggestion for the next 2 hours
-- Ends with a short energising line
-
-If STILL PENDING is empty: celebrate and suggest something restorative.
-Write plain text. Use ✅ ⏳ 📅 for structure."""
-
-        result = _call_claude(
-            prompt,
-            system=ai_instructions,
-            max_tokens=300,
-            label="Nudge Agent (midday)"
-        )
-
-        if not result:
-            pending_str = ', '.join(pending_tasks[:3]) if pending_tasks else "none"
-            done_str    = ', '.join(completed_today[:3]) if completed_today else "none"
-            return (
-                f"🔔 Midday Check-In · {now.strftime('%I:%M %p')}\n\n"
-                f"✅ Done today: {done_str}\n"
-                f"⏳ Still pending: {pending_str}\n\n"
-                f"📅 Check your calendar for the rest of the day."
-            )
-        return result
-
-    def run_evening(
-        self,
-        pending_tasks: list[str],
-        completed_today: list[str],
-        ai_instructions: str,
-    ) -> str:
-        """Evening wrap-up: how did the day go + what's queued for tomorrow."""
-        now = get_ist_now()
-
-        prompt = f"""You are the Evening Nudge Agent for Avinash's Life OS.
-It is {now.strftime('%I:%M %p')} IST — end of the workday.
-
-COMPLETED TODAY: {', '.join(completed_today) if completed_today else 'None recorded'}
-STILL OPEN: {', '.join(pending_tasks) if pending_tasks else 'All clear'}
-
-Write a Discord message (under 150 words) that:
-- Opens with "🌙 Evening Wrap · {now.strftime('%I:%M %p')}"
-- Celebrates anything completed (don't skip this — wins matter)
-- Acknowledges anything still open without guilt — just notes it for tomorrow
-- Ends with a reminder that the evening journal entry is due (8 PM)
-  and gives a one-line journal prompt related to today's work
-
-Warm, not corporate. Honest, not preachy."""
-
-        result = _call_claude(
-            prompt,
-            system=ai_instructions,
-            max_tokens=250,
-            label="Nudge Agent (evening)"
-        )
-        if not result:
-            done_str = ', '.join(completed_today[:3]) if completed_today else "none yet"
-            return (
-                f"🌙 Evening Wrap · {now.strftime('%I:%M %p')}\n\n"
-                f"✅ Today's wins: {done_str}\n\n"
-                f"📝 Journal reminder: your 8 PM entry is waiting."
-            )
         return result
 
 

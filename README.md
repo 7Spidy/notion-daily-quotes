@@ -1,24 +1,25 @@
 # 🧠 Life OS Daily Automation
 
-> Your personal AI chief of staff — runs while you sleep, briefs you when you wake up, nudges you at lunch, and wraps up your day. No subscription. No app. Just a GitHub repo and some cleverly chained AI agents.
+> Your personal AI chief of staff — runs once a night while you sleep and
+> briefs you when you wake up. No subscription. No app. Just a GitHub repo
+> and a chained set of AI agents.
 
-Powered by **Claude (Anthropic)**, **Notion**, **Google Calendar**, and **Discord**.
+Powered by **Claude (Anthropic)**, **Notion**, and **Google Calendar**.
 
 ---
 
 ## What It Does
 
-Three times a day, a multi-agent AI pipeline reads your life data and either writes to your Notion dashboard or pings your Discord:
+Once a day, a multi-agent AI pipeline reads your life data and writes a
+morning briefing to your Notion dashboard.
 
 | Time (IST) | What happens |
 |---|---|
-| **3 AM** | Full morning briefing written to Notion — journal synthesis, task focus, calendar suggestions |
-| **1 PM** | Midday Discord nudge + approved calendar blocks get created in Google Calendar |
-| **7 PM** | Evening wrap-up on Discord — wins celebrated, open items noted, journal prompt dropped |
+| **3 AM** | Full morning briefing written to Notion — journal synthesis, task focus, calendar context |
 
 ---
 
-## The Agent Pipeline (Morning)
+## The Agent Pipeline
 
 It's not one big prompt. It's four focused agents that hand off to each other:
 
@@ -26,12 +27,14 @@ It's not one big prompt. It's four focused agents that hand off to each other:
 Raw data
    └─▶  Orchestrator   →  "Here's what matters today" (internal director's note)
             └─▶  Context Agent  →  "Here's what happened, with correct temporal labels"
-                     └─▶  Planning Agent  →  Morning Insight + Daily Briefing + Calendar suggestions
+                     └─▶  Planning Agent  →  Morning Insight + Daily Briefing
                                 └─▶  Review Agent  →  Fact-checks, formats, generates a memory entry
                                          └─▶  Notion ✅
 ```
 
-Each agent has **one job**. The Orchestrator never writes user content. The Review Agent never fetches data. This keeps outputs clean and hallucination-free.
+Each agent has **one job**. The Orchestrator never writes user content. The
+Review Agent never fetches data. This keeps outputs clean and
+hallucination-free.
 
 ---
 
@@ -45,18 +48,8 @@ Each agent has **one job**. The Orchestrator never writes user content. The Revi
 1. What happened (references your actual journal entries, with temporal context like "Yesterday evening")
 2. One task to focus on today
 3. One action toward a strategic goal
-4. How to use your free calendar slots (specific times, not vague advice)
+4. How to use your free calendar slots (specific times, read from Google Calendar — informational only, nothing is booked)
 5. One enjoyable thing to do
-
-**📅 Calendar Queue** — checkbox list you can approve before 1 PM. Check the ones you want → Google Calendar events get created automatically at the midday run.
-
----
-
-## What Lands in Discord
-
-**🔔 Midday Check-In** — still-pending tasks called out by name, remaining calendar events, one specific suggestion for the next 2 hours.
-
-**🌙 Evening Wrap** — day summary, wins celebrated, open items noted without guilt, 8 PM journal reminder + prompt.
 
 ---
 
@@ -64,7 +57,7 @@ Each agent has **one job**. The Orchestrator never writes user content. The Revi
 
 - **Temporal labels** — journal entries arrive with labels like "Yesterday morning (6:30 AM)" instead of raw dates. Claude knows what "recent" means.
 - **Completed task tracking** — not just what's pending, but what you finished in the last 24 hours. Wins get acknowledged.
-- **Calendar approval flow** — Claude suggests time blocks, you approve them in Notion, they appear in your calendar. No auto-booking.
+- **Calendar context, read-only** — today's events and free time are pulled in for the briefing; nothing is ever written back to the calendar.
 - **Agent Memory** — observations saved to a Notion DB after every run. Agents read recent memory before generating content, so context compounds over time.
 - **Sunday extras** — weekly tech audit of the automation itself + memory consolidation of entries older than 14 days.
 
@@ -75,10 +68,9 @@ Each agent has **one job**. The Orchestrator never writes user content. The Revi
 | Layer | Tool |
 |---|---|
 | AI | Claude (`claude-sonnet-4-6`) via Anthropic API |
-| Dashboard | Notion (callout blocks, to-do blocks, database queries) |
-| Calendar | Google Calendar API (read + write, service account) |
-| Nudges | Discord (webhook, no bot needed) |
-| Scheduler | GitHub Actions (3 cron jobs + manual dispatch) |
+| Dashboard | Notion (callout blocks, database queries) |
+| Calendar | Google Calendar API (read-only, service account) |
+| Scheduler | GitHub Actions (1 cron job + manual dispatch) |
 | Runtime | Python 3.11, `anthropic`, `requests`, `PyJWT`, `cryptography` |
 
 ---
@@ -86,14 +78,12 @@ Each agent has **one job**. The Orchestrator never writes user content. The Revi
 ## Files
 
 ```
-utils.py        — Notion, Calendar, Discord clients + temporal helpers
-agents.py       — 6 agent classes: Orchestrator, Context, Planning, Review, Nudge, TechAudit
+utils.py        — Notion + Calendar clients, temporal helpers
+agents.py       — 5 agent classes: Orchestrator, Context, Planning, Review, TechAudit
 morning_run.py  — 3 AM pipeline
-midday_run.py   — 1 PM calendar + nudge
-evening_run.py  — 7 PM wrap-up
 .github/
   workflows/
-    daily-quote.yml  — 3 cron schedules + workflow_dispatch
+    daily-quote.yml  — single cron schedule + workflow_dispatch
 ```
 
 ---
@@ -107,12 +97,13 @@ ANTHROPIC_API_KEY       NOTION_API_KEY          NOTION_PAGE_ID
 GOOGLE_CREDENTIALS      GOOGLE_CALENDAR_ID
 WEEKLY_CHECKLIST_DB_ID  STRATEGIC_GOALS_DB_ID   DAILY_JOURNAL_DB_ID
 AGENT_MEMORY_PAGE_ID    AGENT_MEMORY_DB_ID
-DISCORD_WEBHOOK_URL
 ```
 
 The Notion databases expected: Weekly Checklist, Strategic Goals, Daily Journal, Agent Memory Log.
-The Google service account needs "Make changes to events" permission on your calendar.
+The Google service account only needs read access to your calendar.
 
 ---
 
-*Previously a single-file OpenAI script running at midnight. Now a six-agent Claude pipeline running three times daily. Glow-up complete.*
+*Previously a single-file OpenAI script running at midnight, then a six-agent
+Claude pipeline running three times daily. Now back down to one clean
+morning run.*

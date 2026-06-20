@@ -91,7 +91,6 @@ class NotionClient:
     - Journal entries now include full timestamps → temporal labels work correctly
     - Memory DB uses confirmed property names: Memory (title), Detail, Type, Source
     - New: get_tasks_completed_last_24h() — "what did I finish yesterday?"
-    - New: write_calendar_queue() — approval-based calendar blocking
     - Block marker now written at the TOP of callout text so find_block never misses it
     """
 
@@ -611,147 +610,6 @@ class NotionClient:
         except Exception:
             return []
 
-    # ── Calendar Queue (approval-based time blocking) ─────────────────────────
-
-    def write_calendar_queue(
-        self,
-        suggestions: list[dict],
-        existing_id: str | None = None
-    ):
-        """
-        NEW: Writes the Planning Agent's calendar suggestions as to_do blocks.
-
-        How the approval flow works:
-        1. Morning run (3 AM): Planning Agent identifies free slots and suggests blocks.
-           This method writes them as unchecked to_do items under a callout on your
-           Notion page.
-        2. You open Notion, check the ones you want.
-        3. Midday run (1 PM): Reads checked items, creates Google Calendar events,
-           archives the processed blocks.
-
-        suggestions: [{"title": "...", "start": "HH:MM", "end": "HH:MM"}]
-        """
-        if not suggestions:
-            return
-
-        # Archive the old queue block if it exists, then rebuild it fresh.
-        # This prevents stale suggestions from previous days accumulating.
-        if existing_id:
-            try:
-                requests.patch(
-                    f"https://api.notion.com/v1/blocks/{existing_id}",
-                    headers=self._h, json={"archived": True}, timeout=10
-                )
-            except Exception:
-                pass
-
-        # Create the header callout
-        header_text = (
-            "📅 Calendar Queue\n"
-            "Check items to approve → will be blocked at 1 PM run\n"
-            "Uncheck anything you don't want."
-        )
-        header_block = {
-            "object": "block",
-            "type": "callout",
-            "callout": {
-                "rich_text": [{"type": "text", "text": {"content": header_text}}],
-                "icon": {"emoji": "📅"},
-                "color": "yellow_background",
-            }
-        }
-
-        try:
-            # Append the callout to the page
-            r = requests.patch(
-                f"https://api.notion.com/v1/blocks/{self.page_id}/children",
-                headers=self._h,
-                json={"children": [header_block]},
-                timeout=15
-            )
-            if r.status_code != 200:
-                print(f"  ⚠️  Calendar queue header failed: HTTP {r.status_code}")
-                return
-
-            new_callout_id = r.json()["results"][0]["id"]
-
-            # Add to_do child blocks inside the callout
-            todo_blocks = [
-                {
-                    "object": "block",
-                    "type": "to_do",
-                    "to_do": {
-                        # Format: "Block HH:MM–HH:MM: Task Title" — must match regex in reader
-                        "rich_text": [{"type": "text", "text": {
-                            "content": f"Block {s['start']}–{s['end']}: {s['title']}"
-                        }}],
-                        "checked": False,
-                    }
-                }
-                for s in suggestions
-            ]
-
-            r2 = requests.patch(
-                f"https://api.notion.com/v1/blocks/{new_callout_id}/children",
-                headers=self._h,
-                json={"children": todo_blocks},
-                timeout=15
-            )
-            if r2.status_code == 200:
-                print(f"  ✅ Calendar queue: {len(suggestions)} suggestion(s) written")
-            else:
-                print(f"  ⚠️  Calendar queue to_do items failed: HTTP {r2.status_code}")
-
-        except Exception as e:
-            print(f"  ⚠️  Calendar queue write failed: {e}")
-
-    def get_approved_calendar_blocks(self, queue_block_id: str) -> list[dict]:
-        """
-        Reads checked to_do items from the Calendar Queue callout.
-        Returns parsed items: [{"title": ..., "start": "HH:MM", "end": "HH:MM", "block_id": ...}]
-        """
-        if not queue_block_id:
-            return []
-        try:
-            r = requests.get(
-                f"https://api.notion.com/v1/blocks/{queue_block_id}/children",
-                headers=self._h, timeout=10
-            )
-            if r.status_code != 200:
-                return []
-
-            approved = []
-            for block in r.json().get("results", []):
-                if block["type"] != "to_do" or not block["to_do"].get("checked"):
-                    continue
-                text = "".join(
-                    t.get("plain_text", "")
-                    for t in block["to_do"].get("rich_text", [])
-                )
-                # Parse "Block HH:MM–HH:MM: Task Title"
-                m = re.match(r"Block (\d{2}:\d{2})–(\d{2}:\d{2}): (.+)", text)
-                if m:
-                    approved.append({
-                        "start":    m.group(1),
-                        "end":      m.group(2),
-                        "title":    m.group(3),
-                        "block_id": block["id"],
-                    })
-            return approved
-        except Exception as e:
-            print(f"  ⚠️  Approved blocks read failed: {e}")
-            return []
-
-    def archive_block(self, block_id: str):
-        """Hides a processed block from the page (e.g., after calendar event created)."""
-        try:
-            requests.patch(
-                f"https://api.notion.com/v1/blocks/{block_id}",
-                headers=self._h, json={"archived": True}, timeout=10
-            )
-        except Exception:
-            pass
-
     # ── Memory Write ──────────────────────────────────────────────────────────
 
     def save_memory(
@@ -877,19 +735,13 @@ class NotionClient:
 
 class CalendarClient:
     """
-    Google Calendar — read AND write.
+    Google Calendar — read-only.
 
-    The original code used calendar.readonly scope.
-    Changed to full calendar scope to support event creation (time blocking).
-
-    HOW TO UPDATE YOUR SERVICE ACCOUNT:
-    No changes needed to the service account JSON.
-    Just change the scope string in this class (already done below).
-    The service account must have "Make changes to events" permission on the calendar.
+    Used only to pull today's events and compute vacant slots for the morning
+    briefing's context. Nothing is written back to the calendar.
     """
 
     SCOPE_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
-    SCOPE_WRITE    = "https://www.googleapis.com/auth/calendar"   # ← changed from readonly
 
     def __init__(self):
         try:
@@ -907,7 +759,7 @@ class CalendarClient:
             now = int(time.time())
             payload = {
                 "iss": self.credentials["client_email"],
-                "scope": self.SCOPE_WRITE,       # ← write scope
+                "scope": self.SCOPE_READONLY,
                 "aud": "https://oauth2.googleapis.com/token",
                 "exp": now + 3600,
                 "iat": now,
@@ -1030,84 +882,3 @@ class CalendarClient:
 
         return vacant
 
-    def create_event(self, title: str, start_hhmm: str, end_hhmm: str) -> bool:
-        """
-        NEW: Creates a calendar event for today at the given IST times.
-        Only called by midday_run after user approval via Notion to_do check.
-        """
-        token = self._get_token()
-        if not token:
-            print("  ⚠️  Cannot create event: no calendar token")
-            return False
-
-        today = get_ist_now().strftime("%Y-%m-%d")
-        event_body = {
-            "summary": f"[Life OS] {title}",
-            "start": {
-                "dateTime": f"{today}T{start_hhmm}:00+05:30",
-                "timeZone": "Asia/Kolkata",
-            },
-            "end": {
-                "dateTime": f"{today}T{end_hhmm}:00+05:30",
-                "timeZone": "Asia/Kolkata",
-            },
-            "colorId": "9",   # Blue = Office category
-            "description": "Created by Life OS automation",
-        }
-        try:
-            r = requests.post(
-                f"https://www.googleapis.com/calendar/v3/calendars/{self.calendar_id}/events",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json=event_body, timeout=15
-            )
-            if r.status_code in (200, 201):
-                print(f"  ✅ Calendar event created: {start_hhmm}–{end_hhmm} — {title}")
-                return True
-            else:
-                print(f"  ⚠️  Event create failed: HTTP {r.status_code}: {r.text[:100]}")
-                return False
-        except Exception as e:
-            print(f"  ⚠️  Event create error: {e}")
-            return False
-
-
-# ─── Discord Client ───────────────────────────────────────────────────────────
-
-class DiscordClient:
-    """
-    Sends messages to Discord via a webhook URL.
-
-    Setup (one-time, 2 minutes):
-    1. In your Discord server → Channel Settings → Integrations → Create Webhook
-    2. Copy the webhook URL
-    3. In GitHub repo → Settings → Secrets → Add DISCORD_WEBHOOK_URL
-
-    No bot needed, no server needed. Just the webhook URL.
-    """
-
-    def __init__(self):
-        self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL", "")
-
-    def send(self, content: str, username: str = "Life OS") -> bool:
-        """Posts a message to Discord. Returns True on success."""
-        if not self.webhook_url:
-            print("  ⚠️  DISCORD_WEBHOOK_URL not set — skipping Discord")
-            return False
-        if len(content) > 2000:
-            content = content[:1997] + "…"
-        try:
-            r = requests.post(
-                self.webhook_url,
-                json={"content": content, "username": username},
-                timeout=10
-            )
-            # Discord returns 204 No Content on success
-            if r.status_code == 204:
-                print("  ✅ Discord message sent")
-                return True
-            else:
-                print(f"  ⚠️  Discord error: HTTP {r.status_code}: {r.text[:100]}")
-                return False
-        except Exception as e:
-            print(f"  ⚠️  Discord send error: {e}")
-            return False

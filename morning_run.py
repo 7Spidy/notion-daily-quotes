@@ -10,7 +10,7 @@ WHAT'S DIFFERENT:
   - Temporal labels on journal entries ("Yesterday morning (6:30 AM)")
   - Queries completed tasks from last 24h (new — was invisible before)
   - Vacant slot detection replaced with actual time-gap computation
-  - Calendar block suggestions written to Notion for approval
+  - Calendar read access is context-only — no events are created or modified
   - Memory saved with correct property names + Type + Source
   - Sunday: also runs TechAuditAgent and memory consolidation
 """
@@ -39,7 +39,6 @@ def run():
     print("\n💬 Finding existing blocks…")
     insight_block_id  = notion.find_block_by_marker("☀️ Morning Insight")
     briefing_block_id = notion.find_block_by_marker("🌅 Daily Insight")
-    queue_block_id    = notion.find_block_by_marker("📅 Calendar Queue")
 
     insight_feedback  = notion.get_block_comments(insight_block_id)  if insight_block_id  else []
     briefing_feedback = notion.get_block_comments(briefing_block_id) if briefing_block_id else []
@@ -47,7 +46,6 @@ def run():
 
     print(f"  Morning Insight block: {'found' if insight_block_id else 'will create'}")
     print(f"  Daily Insight block:   {'found' if briefing_block_id else 'will create'}")
-    print(f"  Calendar Queue block:  {'found' if queue_block_id else 'will create'}")
     print(f"  User feedback comments: {len(all_feedback)}")
 
     # ── Step 3: Fetch all data ────────────────────────────────────────────────
@@ -162,16 +160,6 @@ def run():
 
     print("\n📝 Freezing journal prompt into today's Daily Journal entry…")
     notion.freeze_prompt_into_journal(journal_prompt)
-
-    # Write calendar block suggestions if the planning agent found any
-    if plan["calendar_suggestions"]:
-        print(f"\n📅 Writing {len(plan['calendar_suggestions'])} calendar suggestion(s) to Notion…")
-        notion.write_calendar_queue(
-            suggestions  = plan["calendar_suggestions"],
-            existing_id  = queue_block_id,
-        )
-    else:
-        print("\n  ℹ️  No vacant slots suitable for calendar blocking today")
 
     # ── Step 6: Save memory observation ──────────────────────────────────────
     if final.get("memory_text"):
