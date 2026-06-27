@@ -3,20 +3,13 @@
 """
 morning_run.py — 3 AM IST daily run
 
-WHAT THIS REPLACES: morning_insight.py
-WHAT'S DIFFERENT:
-  - Runs at 3 AM (not midnight) so both yesterday's journal entries are complete
-  - Multi-agent pipeline: Orchestrator → Context → Planning → Review
-  - Temporal labels on journal entries ("Yesterday morning (6:30 AM)")
-  - Queries completed tasks from last 24h (new — was invisible before)
-  - Vacant slot detection replaced with actual time-gap computation
-  - Calendar read access is context-only — no events are created or modified
-  - Memory saved with correct property names + Type + Source
-  - Sunday: also runs TechAuditAgent and memory consolidation
+Single consolidated DailyAgent call (one Claude call) replacing the old
+Orchestrator → Context → Planning → Review 4-agent pipeline.
+Sunday additionally runs TechAuditAgent and memory consolidation.
 """
 
 from utils import NotionClient, CalendarClient, format_ist, get_ist_now
-from agents import OrchestratorAgent, ContextAgent, PlanningAgent, ReviewAgent, TechAuditAgent
+from agents import DailyAgent, TechAuditAgent
 
 
 def run():
@@ -69,62 +62,27 @@ def run():
     for e in journal_entries[:4]:
         print(f"  [{e['date_label']}] {e['title']}")
 
-    # ── Step 4: Multi-agent pipeline ──────────────────────────────────────────
+    # ── Step 4: Single consolidated DailyAgent call ───────────────────────────
     run_date    = now.strftime("%B %d, %Y")
     day_of_year = now.timetuple().tm_yday
     day_of_week = now.strftime("%A")
 
-    print("\n🧠 Agent pipeline starting…")
-
-    # 4a. Orchestrator: set the agenda
-    orchestrator = OrchestratorAgent()
-    orchestrator_brief = orchestrator.run(
-        pending_tasks    = pending_tasks,
-        completed_today  = completed_today,
-        strategic_goals  = strategic_goals,
-        calendar_events  = calendar_events,
-        memories         = memories,
-        ai_instructions  = ai_instructions,
-        run_date         = run_date,
-    )
-    print(f"\n  Orchestrator brief preview: {orchestrator_brief[:80]}…")
-
-    # 4b. Context Agent: synthesise what happened with temporal accuracy
-    context_agent = ContextAgent()
-    context_synthesis = context_agent.run(
-        journal_entries    = journal_entries,
-        completed_today    = completed_today,
-        pending_tasks      = pending_tasks,
-        strategic_goals    = strategic_goals,
-        orchestrator_brief = orchestrator_brief,
-        ai_instructions    = ai_instructions,
-    )
-
-    # 4c. Planning Agent: create the morning insight + daily briefing + suggestions
-    planning_agent = PlanningAgent()
-    plan = planning_agent.run(
-        context_synthesis  = context_synthesis,
-        orchestrator_brief = orchestrator_brief,
-        calendar_events    = calendar_events,
-        vacant_slots       = vacant_slots,
-        pending_tasks      = pending_tasks,
-        ai_instructions    = ai_instructions,
-        day_of_year        = day_of_year,
-        current_year       = now.year,
-        day_of_week        = day_of_week,
-        user_feedback      = all_feedback,
-    )
-
-    # 4d. Review Agent: validate facts, format, and generate memory observation
-    review_agent = ReviewAgent()
-    final = review_agent.run(
-        morning_insight  = plan["morning_insight"],
-        daily_briefing   = plan["daily_briefing"],
-        context_synthesis= context_synthesis,
-        ai_instructions  = ai_instructions,
-        pending_tasks    = pending_tasks,
-        completed_today  = completed_today,
-        strategic_goals  = strategic_goals,
+    print("\n🧠 Daily Agent starting…")
+    daily_agent = DailyAgent()
+    final = daily_agent.run(
+        journal_entries = journal_entries,
+        completed_today = completed_today,
+        pending_tasks   = pending_tasks,
+        strategic_goals = strategic_goals,
+        calendar_events = calendar_events,
+        vacant_slots    = vacant_slots,
+        memories        = memories,
+        ai_instructions = ai_instructions,
+        user_feedback   = all_feedback,
+        run_date        = run_date,
+        day_of_year     = day_of_year,
+        current_year    = now.year,
+        day_of_week     = day_of_week,
     )
 
     # ── Step 5: Write to Notion ───────────────────────────────────────────────
@@ -166,7 +124,7 @@ def run():
         print("\n🧠 Saving memory observation…")
         notion.save_memory(
             memory_text = final["memory_text"],
-            detail      = final.get("memory_detail", context_synthesis[:500]),
+            detail      = final.get("memory_detail", ""),
             memory_type = "Pattern",
             source      = "Agent Auto",
         )
