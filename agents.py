@@ -9,7 +9,7 @@ Sunday additionally runs TechAuditAgent after the main run.
 
 import re
 from anthropic import Anthropic
-from utils import get_ist_now, format_ist
+from utils import get_ist_now, format_ist, CLAUDE_MODEL, THINKING_OFF
 
 client = Anthropic()
 
@@ -25,8 +25,9 @@ def _call_claude(
     Returns the text response, stripped of leading/trailing whitespace.
     """
     kwargs = {
-        "model": "claude-sonnet-4-6",
+        "model": CLAUDE_MODEL,
         "max_tokens": max_tokens,
+        "thinking": THINKING_OFF,
         "messages": [{"role": "user", "content": prompt}],
     }
     if system:
@@ -36,6 +37,10 @@ def _call_claude(
         print(f"  🤖 {label or 'Claude'} call…")
         resp = client.messages.create(**kwargs)
         text = "".join(b.text for b in resp.content if b.type == "text").strip()
+        if resp.stop_reason == "max_tokens":
+            print(f"  ⚠️  {label or 'Claude'} hit max_tokens ({max_tokens}) — output truncated")
+        if not text:
+            print(f"  ⚠️  {label or 'Claude'} returned no text (stop_reason={resp.stop_reason})")
         print(f"  ✅ {label or 'Done'} ({len(text)} chars)")
         return text
     except Exception as e:
@@ -154,7 +159,7 @@ MEMORY:
         raw_prompt_kwargs = {
             "prompt": prompt,
             "system": ai_instructions,
-            "max_tokens": 1400,
+            "max_tokens": 1800,
             "label": "Daily Agent",
         }
 
@@ -358,7 +363,7 @@ Be direct. Only flag real issues. If everything looks fine, say so briefly."""
         result = _call_claude(
             prompt,
             system=ai_instructions,
-            max_tokens=400,
+            max_tokens=540,
             label="Tech Audit Agent"
         )
         return result or "System Health: Good\n\nNo issues detected this week."

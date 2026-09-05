@@ -67,7 +67,7 @@ hallucination-free.
 
 | Layer | Tool |
 |---|---|
-| AI | Claude (`claude-sonnet-4-6`) via Anthropic API |
+| AI | Claude (`claude-sonnet-5`) via Anthropic API |
 | Dashboard | Notion (callout blocks, database queries) |
 | Calendar | Google Calendar API (read-only, service account) |
 | Scheduler | GitHub Actions (1 cron job + manual dispatch) |

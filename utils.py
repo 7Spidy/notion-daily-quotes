@@ -19,6 +19,13 @@ from datetime import datetime, timezone, timedelta
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Anthropic model for every Claude call in this project.
+# Sonnet 5 runs adaptive thinking by default and counts thinking tokens against
+# max_tokens. Our calls are budgeted for prose only, so we opt out explicitly
+# and keep Sonnet 4.6's no-thinking behaviour.
+CLAUDE_MODEL = "claude-sonnet-5"
+THINKING_OFF = {"type": "disabled"}
+
 CALENDAR_COLOR_MAP = {
     "11": ("🔴", "Fun/Play"), "4": ("🔴", "Fun/Play"), "6": ("🔴", "Fun/Play"),
     "9":  ("🔵", "Office"),   "1": ("🔵", "Office"),   "7": ("🔵", "Office"),
@@ -708,8 +715,10 @@ class NotionClient:
         )
         try:
             resp = client.messages.create(
-                model="claude-sonnet-4-6", max_tokens=250,
-                messages=[{"role": "user", "content": prompt}]
+                model=CLAUDE_MODEL,
+                max_tokens=340,
+                thinking=THINKING_OFF,
+                messages=[{"role": "user", "content": prompt}],
             )
             summary = "".join(b.text for b in resp.content if b.type == "text").strip()
         except Exception:
