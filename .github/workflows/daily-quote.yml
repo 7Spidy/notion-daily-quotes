@@ -3,7 +3,7 @@ name: Life OS Daily Automation
 on:
   schedule:
     # 30 21 UTC = 3:00 AM IST — the only scheduled run
-    - cron: '30 21 * * *'
+  #  - cron: '30 21 * * *'
   workflow_dispatch:   # Manual trigger from GitHub UI (useful for testing)
 
 jobs:
